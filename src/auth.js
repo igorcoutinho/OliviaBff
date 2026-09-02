@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { pool } = require('./db');
+const getFileUrl = (...args) => require('./storage').getFileUrl(...args);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
@@ -37,14 +38,14 @@ async function register(fullName, password) {
     [fullName.trim(), username, passwordHash]
   );
 
-  const user = rows[0];
+  const user = await formatUser(rows[0]);
   const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
   return { user, token };
 }
 
 async function login(username, password) {
   const { rows } = await pool.query(
-    'SELECT id, full_name, username, password_hash, created_at FROM users WHERE username = $1',
+    'SELECT id, full_name, username, password_hash, avatar_key, created_at FROM users WHERE username = $1',
     [username.toLowerCase().trim()]
   );
 
@@ -56,7 +57,7 @@ async function login(username, password) {
 
   const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
   return {
-    user: { id: user.id, full_name: user.full_name, username: user.username, created_at: user.created_at },
+    user: await formatUser(user),
     token,
   };
 }
@@ -76,12 +77,27 @@ function authMiddleware(req, res, next) {
   }
 }
 
-async function getUserById(userId) {
-  const { rows } = await pool.query(
-    'SELECT id, full_name, username, created_at FROM users WHERE id = $1',
-    [userId]
-  );
-  return rows[0] || null;
+async function formatUser(row) {
+  if (!row) return null;
+  const user = {
+    id: row.id,
+    full_name: row.full_name,
+    username: row.username,
+    created_at: row.created_at,
+    avatar_url: null,
+  };
+  if (row.avatar_key) {
+    user.avatar_url = await getFileUrl(row.avatar_key);
+  }
+  return user;
 }
 
-module.exports = { register, login, authMiddleware, getUserById, generateUniqueUsername };
+async function getUserById(userId) {
+  const { rows } = await pool.query(
+    'SELECT id, full_name, username, avatar_key, created_at FROM users WHERE id = $1',
+    [userId]
+  );
+  return formatUser(rows[0]);
+}
+
+module.exports = { register, login, authMiddleware, getUserById, formatUser, generateUniqueUsername };

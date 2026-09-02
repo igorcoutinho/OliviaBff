@@ -5,6 +5,7 @@ CREATE TABLE users (
   full_name VARCHAR(255) NOT NULL,
   username VARCHAR(100) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
+  avatar_key VARCHAR(500),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

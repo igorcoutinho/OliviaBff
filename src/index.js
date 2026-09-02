@@ -1,11 +1,12 @@
 require('dotenv').config();
+console.log('Iniciando backend...');
 
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('./db');
-const { ensureBucket, uploadFile, getFileUrl } = require('./storage');
+const storage = () => require('./storage');
 const { register, login, authMiddleware, getUserById } = require('./auth');
 
 const app = express();
@@ -77,6 +78,59 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   res.json(user);
 });
 
+// ── Perfil ──
+
+app.get('/api/profile', authMiddleware, async (req, res) => {
+  try {
+    const user = await getUserById(req.user.userId);
+    if (!user) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+    const { rows } = await pool.query(
+      `SELECT
+        (SELECT COUNT(*)::int FROM photos WHERE user_id = $1) AS photos,
+        (SELECT COUNT(*)::int FROM videos WHERE user_id = $1) AS videos`,
+      [req.user.userId]
+    );
+
+    res.json({
+      user,
+      stats: rows[0],
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/profile/avatar', authMiddleware, upload.single('avatar'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Nenhuma imagem enviada' });
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Apenas imagens são permitidas' });
+    }
+
+    const ext = req.file.originalname?.split('.').pop() || 'jpg';
+    const key = `avatars/${req.user.userId}/${uuidv4()}.${ext}`;
+    await storage().uploadFile(key, req.file.buffer, req.file.mimetype);
+
+    await pool.query('UPDATE users SET avatar_key = $1 WHERE id = $2', [key, req.user.userId]);
+
+    const user = await getUserById(req.user.userId);
+    res.json({ message: 'Foto de perfil atualizada! 🌸', user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/profile/avatar', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('UPDATE users SET avatar_key = NULL WHERE id = $1', [req.user.userId]);
+    const user = await getUserById(req.user.userId);
+    res.json({ message: 'Foto de perfil removida', user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Vídeos (privados — só o dono vê) ──
 
 app.post('/api/videos', authMiddleware, upload.single('video'), async (req, res) => {
@@ -88,7 +142,7 @@ app.post('/api/videos', authMiddleware, upload.single('video'), async (req, res)
 
     const ext = req.file.originalname?.split('.').pop() || 'mp4';
     const key = `videos/${req.user.userId}/${uuidv4()}.${ext}`;
-    await uploadFile(key, req.file.buffer, req.file.mimetype);
+    await storage().uploadFile(key, req.file.buffer, req.file.mimetype);
 
     const message = (req.body.message || '').trim();
     const { rows } = await pool.query(
@@ -130,7 +184,7 @@ app.post('/api/photos', authMiddleware, upload.single('photo'), async (req, res)
 
     const ext = req.file.originalname?.split('.').pop() || 'jpg';
     const key = `photos/${uuidv4()}.${ext}`;
-    await uploadFile(key, req.file.buffer, req.file.mimetype);
+    await storage().uploadFile(key, req.file.buffer, req.file.mimetype);
 
     const caption = (req.body.caption || '').trim();
     const { rows } = await pool.query(
@@ -171,7 +225,7 @@ app.get('/api/photos/feed', authMiddleware, async (req, res) => {
     caption: p.caption,
     created_at: p.created_at,
     author: { full_name: p.full_name, username: p.username },
-    url: await getFileUrl(p.storage_key),
+    url: await storage().getFileUrl(p.storage_key),
     reactions: p.reactions,
     myReaction: p.reactions.find((r) => r.user_id === req.user.userId)?.emoji || null,
   })));
@@ -229,10 +283,16 @@ app.use((err, _req, res, _next) => {
 });
 
 async function start() {
-  await ensureBucket();
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🌸 Jardim Encantado da Olivia — http://0.0.0.0:${PORT}`);
   });
+
+  try {
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_key VARCHAR(500)');
+    await storage().ensureBucket();
+  } catch (err) {
+    console.warn(`⚠️  Inicialização parcial: ${err.message}`);
+  }
 }
 
 start().catch((err) => {
