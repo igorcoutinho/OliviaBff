@@ -4,7 +4,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "migrate:mysql": "node scripts/migrate.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.750.0",
@@ -15,6 +16,7 @@
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.24.3",
     "pg": "^8.13.3",
     "uuid": "^11.1.0"
   }

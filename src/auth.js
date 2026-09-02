@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { pool } = require('./db');
+const { query, newId } = require('./db');
 const getFileUrl = (...args) => require('./storage').getFileUrl(...args);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
@@ -22,7 +22,7 @@ async function generateUniqueUsername(fullName) {
   let counter = 1;
 
   while (true) {
-    const { rows } = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+    const { rows } = await query('SELECT id FROM users WHERE username = $1', [username]);
     if (rows.length === 0) return username;
     username = `${base}${counter}`;
     counter++;
@@ -32,10 +32,16 @@ async function generateUniqueUsername(fullName) {
 async function register(fullName, password) {
   const username = await generateUniqueUsername(fullName);
   const passwordHash = await bcrypt.hash(password, 10);
+  const id = newId();
 
-  const { rows } = await pool.query(
-    'INSERT INTO users (full_name, username, password_hash) VALUES ($1, $2, $3) RETURNING id, full_name, username, created_at',
-    [fullName.trim(), username, passwordHash]
+  await query(
+    'INSERT INTO users (id, full_name, username, password_hash) VALUES ($1, $2, $3, $4)',
+    [id, fullName.trim(), username, passwordHash]
+  );
+
+  const { rows } = await query(
+    'SELECT id, full_name, username, created_at FROM users WHERE id = $1',
+    [id]
   );
 
   const user = await formatUser(rows[0]);
@@ -44,7 +50,7 @@ async function register(fullName, password) {
 }
 
 async function login(username, password) {
-  const { rows } = await pool.query(
+  const { rows } = await query(
     'SELECT id, full_name, username, password_hash, avatar_key, created_at FROM users WHERE username = $1',
     [username.toLowerCase().trim()]
   );
@@ -93,7 +99,7 @@ async function formatUser(row) {
 }
 
 async function getUserById(userId) {
-  const { rows } = await pool.query(
+  const { rows } = await query(
     'SELECT id, full_name, username, avatar_key, created_at FROM users WHERE id = $1',
     [userId]
   );

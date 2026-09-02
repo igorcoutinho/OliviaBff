@@ -5,7 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
-const { pool } = require('./db');
+const { query, isMysql, ensureSchemaPatches, newId } = require('./db');
 const storage = () => require('./storage');
 const { register, login, authMiddleware, getUserById } = require('./auth');
 
@@ -33,11 +33,23 @@ function checkAdmin(req, res, next) {
   next();
 }
 
+function parseReactions(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', message: 'Jardim Encantado da Olivia 🌸' });
 });
-
-// ── Auth ──
 
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -78,23 +90,28 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   res.json(user);
 });
 
-// ── Perfil ──
-
 app.get('/api/profile', authMiddleware, async (req, res) => {
   try {
     const user = await getUserById(req.user.userId);
     if (!user) return res.status(404).json({ error: 'Usuário não encontrado' });
 
-    const { rows } = await pool.query(
-      `SELECT
-        (SELECT COUNT(*)::int FROM photos WHERE user_id = $1) AS photos,
-        (SELECT COUNT(*)::int FROM videos WHERE user_id = $1) AS videos`,
+    const { rows } = await query(
+      isMysql
+        ? `SELECT
+            (SELECT COUNT(*) FROM photos WHERE user_id = $1) AS photos,
+            (SELECT COUNT(*) FROM videos WHERE user_id = $1) AS videos`
+        : `SELECT
+            (SELECT COUNT(*)::int FROM photos WHERE user_id = $1) AS photos,
+            (SELECT COUNT(*)::int FROM videos WHERE user_id = $1) AS videos`,
       [req.user.userId]
     );
 
     res.json({
       user,
-      stats: rows[0],
+      stats: {
+        photos: Number(rows[0].photos),
+        videos: Number(rows[0].videos),
+      },
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -112,7 +129,7 @@ app.post('/api/profile/avatar', authMiddleware, upload.single('avatar'), async (
     const key = `avatars/${req.user.userId}/${uuidv4()}.${ext}`;
     await storage().uploadFile(key, req.file.buffer, req.file.mimetype);
 
-    await pool.query('UPDATE users SET avatar_key = $1 WHERE id = $2', [key, req.user.userId]);
+    await query('UPDATE users SET avatar_key = $1 WHERE id = $2', [key, req.user.userId]);
 
     const user = await getUserById(req.user.userId);
     res.json({ message: 'Foto de perfil atualizada! 🌸', user });
@@ -123,15 +140,13 @@ app.post('/api/profile/avatar', authMiddleware, upload.single('avatar'), async (
 
 app.delete('/api/profile/avatar', authMiddleware, async (req, res) => {
   try {
-    await pool.query('UPDATE users SET avatar_key = NULL WHERE id = $1', [req.user.userId]);
+    await query('UPDATE users SET avatar_key = NULL WHERE id = $1', [req.user.userId]);
     const user = await getUserById(req.user.userId);
     res.json({ message: 'Foto de perfil removida', user });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
-// ── Vídeos (privados — só o dono vê) ──
 
 app.post('/api/videos', authMiddleware, upload.single('video'), async (req, res) => {
   try {
@@ -145,9 +160,14 @@ app.post('/api/videos', authMiddleware, upload.single('video'), async (req, res)
     await storage().uploadFile(key, req.file.buffer, req.file.mimetype);
 
     const message = (req.body.message || '').trim();
-    const { rows } = await pool.query(
-      'INSERT INTO videos (user_id, message, storage_key, size) VALUES ($1, $2, $3, $4) RETURNING id, message, created_at',
-      [req.user.userId, message, key, req.file.size]
+    const id = newId();
+    await query(
+      'INSERT INTO videos (id, user_id, message, storage_key, size) VALUES ($1, $2, $3, $4, $5)',
+      [id, req.user.userId, message, key, req.file.size]
+    );
+    const { rows } = await query(
+      'SELECT id, message, created_at FROM videos WHERE id = $1',
+      [id]
     );
 
     res.status(201).json({
@@ -160,20 +180,18 @@ app.post('/api/videos', authMiddleware, upload.single('video'), async (req, res)
 });
 
 app.get('/api/videos/mine', authMiddleware, async (req, res) => {
-  const { rows } = await pool.query(
+  const { rows } = await query(
     'SELECT id, message, storage_key, size, created_at FROM videos WHERE user_id = $1 ORDER BY created_at DESC',
     [req.user.userId]
   );
 
   const videos = await Promise.all(rows.map(async (v) => ({
     ...v,
-    url: await getFileUrl(v.storage_key),
+    url: await storage().getFileUrl(v.storage_key),
   })));
 
   res.json(videos);
 });
-
-// ── Fotos (feed público entre convidados) ──
 
 app.post('/api/photos', authMiddleware, upload.single('photo'), async (req, res) => {
   try {
@@ -187,11 +205,14 @@ app.post('/api/photos', authMiddleware, upload.single('photo'), async (req, res)
     await storage().uploadFile(key, req.file.buffer, req.file.mimetype);
 
     const caption = (req.body.caption || '').trim();
-    const { rows } = await pool.query(
-      `INSERT INTO photos (user_id, caption, storage_key, size)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, caption, storage_key, created_at`,
-      [req.user.userId, caption, key, req.file.size]
+    const id = newId();
+    await query(
+      'INSERT INTO photos (id, user_id, caption, storage_key, size) VALUES ($1, $2, $3, $4, $5)',
+      [id, req.user.userId, caption, key, req.file.size]
+    );
+    const { rows } = await query(
+      'SELECT id, caption, storage_key, created_at FROM photos WHERE id = $1',
+      [id]
     );
 
     res.status(201).json({
@@ -204,7 +225,28 @@ app.post('/api/photos', authMiddleware, upload.single('photo'), async (req, res)
 });
 
 app.get('/api/photos/feed', authMiddleware, async (req, res) => {
-  const { rows } = await pool.query(`
+  const feedSql = isMysql
+    ? `
+    SELECT p.id, p.caption, p.storage_key, p.created_at,
+           u.full_name, u.username,
+           COALESCE((
+             SELECT JSON_ARRAYAGG(
+               JSON_OBJECT(
+                 'emoji', r.emoji,
+                 'username', ru.username,
+                 'full_name', ru.full_name,
+                 'user_id', r.user_id
+               )
+             )
+             FROM reactions r
+             JOIN users ru ON ru.id = r.user_id
+             WHERE r.photo_id = p.id
+           ), JSON_ARRAY()) AS reactions
+    FROM photos p
+    JOIN users u ON u.id = p.user_id
+    ORDER BY p.created_at DESC
+  `
+    : `
     SELECT p.id, p.caption, p.storage_key, p.created_at,
            u.full_name, u.username,
            COALESCE(
@@ -218,17 +260,22 @@ app.get('/api/photos/feed', authMiddleware, async (req, res) => {
     LEFT JOIN users ru ON ru.id = r.user_id
     GROUP BY p.id, u.full_name, u.username
     ORDER BY p.created_at DESC
-  `);
+  `;
 
-  const feed = await Promise.all(rows.map(async (p) => ({
-    id: p.id,
-    caption: p.caption,
-    created_at: p.created_at,
-    author: { full_name: p.full_name, username: p.username },
-    url: await storage().getFileUrl(p.storage_key),
-    reactions: p.reactions,
-    myReaction: p.reactions.find((r) => r.user_id === req.user.userId)?.emoji || null,
-  })));
+  const { rows } = await query(feedSql);
+
+  const feed = await Promise.all(rows.map(async (p) => {
+    const reactions = parseReactions(p.reactions);
+    return {
+      id: p.id,
+      caption: p.caption,
+      created_at: p.created_at,
+      author: { full_name: p.full_name, username: p.username },
+      url: await storage().getFileUrl(p.storage_key),
+      reactions,
+      myReaction: reactions.find((r) => r.user_id === req.user.userId)?.emoji || null,
+    };
+  }));
 
   res.json(feed);
 });
@@ -239,39 +286,46 @@ app.post('/api/photos/:id/react', authMiddleware, async (req, res) => {
     return res.status(400).json({ error: 'Reação não permitida' });
   }
 
-  const photoCheck = await pool.query('SELECT id FROM photos WHERE id = $1', [req.params.id]);
+  const photoCheck = await query('SELECT id FROM photos WHERE id = $1', [req.params.id]);
   if (photoCheck.rows.length === 0) return res.status(404).json({ error: 'Foto não encontrada' });
 
-  await pool.query(
-    `INSERT INTO reactions (photo_id, user_id, emoji)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (photo_id, user_id) DO UPDATE SET emoji = $3`,
-    [req.params.id, req.user.userId, emoji]
-  );
+  if (isMysql) {
+    await query(
+      `INSERT INTO reactions (id, photo_id, user_id, emoji)
+       VALUES ($1, $2, $3, $4)
+       ON DUPLICATE KEY UPDATE emoji = VALUES(emoji)`,
+      [newId(), req.params.id, req.user.userId, emoji]
+    );
+  } else {
+    await query(
+      `INSERT INTO reactions (id, photo_id, user_id, emoji)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (photo_id, user_id) DO UPDATE SET emoji = $4`,
+      [newId(), req.params.id, req.user.userId, emoji]
+    );
+  }
 
   res.json({ success: true });
 });
 
 app.delete('/api/photos/:id/react', authMiddleware, async (req, res) => {
-  await pool.query(
+  await query(
     'DELETE FROM reactions WHERE photo_id = $1 AND user_id = $2',
     [req.params.id, req.user.userId]
   );
   res.json({ success: true });
 });
 
-// ── Admin ──
-
 app.get('/api/admin/summary', checkAdmin, async (_req, res) => {
   const [users, videos, photos] = await Promise.all([
-    pool.query('SELECT COUNT(*) FROM users'),
-    pool.query('SELECT COUNT(*) FROM videos'),
-    pool.query('SELECT COUNT(*) FROM photos'),
+    query('SELECT COUNT(*) AS count FROM users'),
+    query('SELECT COUNT(*) AS count FROM videos'),
+    query('SELECT COUNT(*) AS count FROM photos'),
   ]);
   res.json({
-    users: parseInt(users.rows[0].count),
-    videos: parseInt(videos.rows[0].count),
-    photos: parseInt(photos.rows[0].count),
+    users: parseInt(users.rows[0].count, 10),
+    videos: parseInt(videos.rows[0].count, 10),
+    photos: parseInt(photos.rows[0].count, 10),
   });
 });
 
@@ -288,7 +342,7 @@ async function start() {
   });
 
   try {
-    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_key VARCHAR(500)');
+    await ensureSchemaPatches();
     await storage().ensureBucket();
   } catch (err) {
     console.warn(`⚠️  Inicialização parcial: ${err.message}`);

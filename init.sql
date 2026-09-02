@@ -31,7 +31,7 @@ CREATE TABLE reactions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   photo_id UUID NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  emoji VARCHAR(10) NOT NULL,
+  emoji VARCHAR(16) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(photo_id, user_id)
 );
