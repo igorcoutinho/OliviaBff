@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { newId } from '../db';
 import { uploadFile, getFileUrl, deleteFile } from '../storage';
+import type { UploadedFile, MediaItem, FeedItem, FeedPage, ReactionEntry } from '../types';
 import {
   insertPhoto,
   insertPhotoMedia,
@@ -17,46 +18,18 @@ import {
   type PhotoMediaRow,
 } from '../repositories/photos.repository';
 
-const ALLOWED_REACTIONS = ['❤️', '🥰', '😍', '👏', '🎉', '✨', '🌸', '🧚'];
+export type { MediaItem, FeedItem, FeedPage };
+
+const ALLOWED_REACTIONS = ['❤️', '🥰', '😍', '😊', '👏', '👀', '🎉', '✨', '🌸', '🧚'];
 const REVIEW_USER_IDS = new Set(['1b70a665-8cc7-444a-9d2b-0583fff7b2af']);
 
-export interface MediaItem {
-  type: 'image' | 'video';
-  url: string;
-}
-
-export interface FeedItem {
-  id: string;
-  caption: string;
-  created_at: string;
-  url: string;
-  media: MediaItem[];
-  author: { id: string; full_name: string; username: string; avatar_url: string | null };
-  isMine: boolean;
-  reactions: { emoji: string; username: string; full_name: string; user_id: string }[];
-  myReaction: string | null;
-}
-
-export interface FeedPage {
-  items: FeedItem[];
-  nextCursor: string | null;
-  hasMore: boolean;
-}
-
-interface UploadedFile {
-  originalname?: string;
-  mimetype: string;
-  buffer: Buffer;
-  size: number;
-}
-
-function parseReactions(raw: any): { emoji: string; username: string; full_name: string; user_id: string }[] {
+function parseReactions(raw: unknown): ReactionEntry[] {
   if (!raw) return [];
-  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (Array.isArray(raw)) return raw.filter(Boolean) as ReactionEntry[];
   if (typeof raw === 'string') {
     try {
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+      return Array.isArray(parsed) ? (parsed.filter(Boolean) as ReactionEntry[]) : [];
     } catch {
       return [];
     }
@@ -131,7 +104,9 @@ export async function getFeedPage(params: {
 
   const mediaMap = await buildMediaMap(pageRows.map((p) => p.id));
   const avatarUrlMap = await buildAvatarUrlMap(pageRows);
-  const items = await Promise.all(pageRows.map((p) => buildFeedItem(p, userId, mediaMap, avatarUrlMap)));
+  const items = await Promise.all(
+    pageRows.map((p) => buildFeedItem(p, userId, mediaMap, avatarUrlMap)),
+  );
 
   return {
     items,
@@ -178,7 +153,9 @@ async function buildFeedItem(
 
   const media: MediaItem[] =
     rawMedia.length > 0
-      ? await Promise.all(rawMedia.map(async (m) => ({ type: m.type, url: await getFileUrl(m.storage_key, 86400) })))
+      ? await Promise.all(
+          rawMedia.map(async (m) => ({ type: m.type, url: await getFileUrl(m.storage_key, 86400) })),
+        )
       : [{ type: 'image', url: await getFileUrl(p.storage_key, 86400) }];
 
   return {
@@ -202,13 +179,15 @@ async function buildFeedItem(
 export async function deletePost(params: { postId: string; userId: string }): Promise<void> {
   const { postId, userId } = params;
   const photo = await findPhotoByIdAndUser(postId, userId);
-  if (!photo) throw Object.assign(new Error('Foto não encontrada ou você não pode excluí-la'), { status: 404 });
+  if (!photo)
+    throw Object.assign(new Error('Foto não encontrada ou você não pode excluí-la'), { status: 404 });
 
   const mediaRows = await getMediaByPhotoId(postId);
   await deleteMediaByPhotoId(postId);
   await deletePhotoByIdAndUser(postId, userId);
 
-  const keysToDelete = mediaRows.length > 0 ? mediaRows.map((m) => m.storage_key) : [photo.storage_key];
+  const keysToDelete =
+    mediaRows.length > 0 ? mediaRows.map((m) => m.storage_key) : [photo.storage_key];
   for (const key of keysToDelete) {
     try {
       await deleteFile(key);

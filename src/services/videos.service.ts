@@ -1,21 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import { uploadFile, getFileUrl } from '../storage';
+import type { UploadedFile, VideoItem } from '../types';
 import { insertVideo, findVideosByUser } from '../repositories/videos.repository';
 
-interface UploadedFile {
-  originalname?: string;
-  mimetype: string;
-  buffer: Buffer;
-  size: number;
-}
-
-export interface VideoItem {
-  id: string;
-  message: string;
-  url: string;
-  size: number;
-  created_at: string;
-}
+export type { VideoItem };
 
 export async function createVideo(params: {
   userId: string;

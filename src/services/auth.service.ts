@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getFileUrl } from '../storage';
+import type { PublicUser, AuthResult } from '../types';
 import {
   findUserById,
   findUserByUsername,
@@ -9,20 +10,9 @@ import {
   type UserRow,
 } from '../repositories/users.repository';
 
+export type { PublicUser, AuthResult };
+
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
-
-export interface PublicUser {
-  id: string;
-  full_name: string;
-  username: string;
-  created_at: string;
-  avatar_url: string | null;
-}
-
-export interface AuthResult {
-  user: PublicUser;
-  token: string;
-}
 
 export async function formatUser(row: UserRow | null): Promise<PublicUser | null> {
   if (!row) return null;

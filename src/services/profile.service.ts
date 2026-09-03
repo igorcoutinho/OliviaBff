@@ -1,19 +1,10 @@
 import { v4 as uuidv4 } from 'uuid';
 import { uploadFile } from '../storage';
-import { getUserById, type PublicUser } from './auth.service';
+import type { UploadedFile, ProfileData, PublicUser } from '../types';
+import { getUserById } from './auth.service';
 import { setUserAvatarKey, getUserStats } from '../repositories/users.repository';
 
-interface UploadedFile {
-  originalname?: string;
-  mimetype: string;
-  buffer: Buffer;
-  size: number;
-}
-
-export interface ProfileData {
-  user: PublicUser;
-  stats: { photos: number; videos: number };
-}
+export type { ProfileData };
 
 export async function getProfileWithStats(userId: string): Promise<ProfileData> {
   const user = await getUserById(userId);
