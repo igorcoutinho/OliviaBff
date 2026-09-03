@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { query, newId } = require('./db');
-const getFileUrl = (...args) => require('./storage').getFileUrl(...args);
+const { query, newId } = require('../db');
+const getFileUrl = (...args) => require('../storage').getFileUrl(...args);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
@@ -27,6 +27,29 @@ async function generateUniqueUsername(fullName) {
     username = `${base}${counter}`;
     counter++;
   }
+}
+
+async function formatUser(row) {
+  if (!row) return null;
+  const user = {
+    id: row.id,
+    full_name: row.full_name,
+    username: row.username,
+    created_at: row.created_at,
+    avatar_url: null,
+  };
+  if (row.avatar_key) {
+    user.avatar_url = await getFileUrl(row.avatar_key);
+  }
+  return user;
+}
+
+async function getUserById(userId) {
+  const { rows } = await query(
+    'SELECT id, full_name, username, avatar_key, created_at FROM users WHERE id = $1',
+    [userId]
+  );
+  return formatUser(rows[0]);
 }
 
 async function register(fullName, password) {
@@ -62,48 +85,7 @@ async function login(username, password) {
   if (!valid) throw new Error('Usuário ou senha incorretos');
 
   const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
-  return {
-    user: await formatUser(user),
-    token,
-  };
+  return { user: await formatUser(user), token };
 }
 
-function authMiddleware(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Não autenticado' });
-  }
-
-  try {
-    const token = header.slice(7);
-    req.user = jwt.verify(token, JWT_SECRET);
-    next();
-  } catch {
-    return res.status(401).json({ error: 'Token inválido ou expirado' });
-  }
-}
-
-async function formatUser(row) {
-  if (!row) return null;
-  const user = {
-    id: row.id,
-    full_name: row.full_name,
-    username: row.username,
-    created_at: row.created_at,
-    avatar_url: null,
-  };
-  if (row.avatar_key) {
-    user.avatar_url = await getFileUrl(row.avatar_key);
-  }
-  return user;
-}
-
-async function getUserById(userId) {
-  const { rows } = await query(
-    'SELECT id, full_name, username, avatar_key, created_at FROM users WHERE id = $1',
-    [userId]
-  );
-  return formatUser(rows[0]);
-}
-
-module.exports = { register, login, authMiddleware, getUserById, formatUser, generateUniqueUsername };
+module.exports = { register, login, getUserById, formatUser, generateUniqueUsername };

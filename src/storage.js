@@ -83,4 +83,10 @@ async function getFileUrl(key, expiresIn = 3600) {
   return getSignedUrl(getS3(), new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn });
 }
 
-module.exports = { ensureBucket, uploadFile, getFileUrl, BUCKET };
+async function deleteFile(key) {
+  if (!key) return;
+  const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
+  await getS3().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+}
+
+module.exports = { ensureBucket, uploadFile, getFileUrl, deleteFile, BUCKET };
