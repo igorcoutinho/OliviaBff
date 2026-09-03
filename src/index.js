@@ -261,13 +261,16 @@ app.post('/api/photos', authMiddleware, upload.single('photo'), async (req, res)
 });
 
 app.get('/api/photos/feed', authMiddleware, async (req, res) => {
-  if (String(req.user.username || '').toLowerCase() === 'conta.teste') {
+  const reviewUserIds = new Set([
+    '1b70a665-8cc7-444a-9d2b-0583fff7b2af',
+  ]);
+  if (reviewUserIds.has(String(req.user.userId || '').toLowerCase())) {
     return res.json([]);
   }
 
   const feedSql = isMysql
     ? `
-    SELECT p.id, p.caption, p.storage_key, p.created_at,
+    SELECT p.id, p.user_id, p.caption, p.storage_key, p.created_at,
            u.full_name, u.username,
            COALESCE((
              SELECT JSON_ARRAYAGG(
@@ -287,7 +290,7 @@ app.get('/api/photos/feed', authMiddleware, async (req, res) => {
     ORDER BY p.created_at DESC
   `
     : `
-    SELECT p.id, p.caption, p.storage_key, p.created_at,
+    SELECT p.id, p.user_id, p.caption, p.storage_key, p.created_at,
            u.full_name, u.username,
            COALESCE(
              json_agg(
@@ -310,7 +313,8 @@ app.get('/api/photos/feed', authMiddleware, async (req, res) => {
       id: p.id,
       caption: p.caption,
       created_at: p.created_at,
-      author: { full_name: p.full_name, username: p.username },
+      author: { id: p.user_id, full_name: p.full_name, username: p.username },
+      isMine: p.user_id === req.user.userId,
       url: await storage().getFileUrl(p.storage_key),
       reactions,
       myReaction: reactions.find((r) => r.user_id === req.user.userId)?.emoji || null,
@@ -318,6 +322,34 @@ app.get('/api/photos/feed', authMiddleware, async (req, res) => {
   }));
 
   res.json(feed);
+});
+
+app.delete('/api/photos/:id', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await query(
+      'SELECT id, storage_key FROM photos WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.userId],
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Foto não encontrada ou você não pode excluí-la' });
+    }
+
+    const photo = rows[0];
+    await query('DELETE FROM photos WHERE id = $1 AND user_id = $2', [
+      req.params.id,
+      req.user.userId,
+    ]);
+
+    try {
+      await storage().deleteFile(photo.storage_key);
+    } catch (err) {
+      console.warn(`⚠️  Foto ${photo.id} removida do banco, mas falhou no storage: ${err.message}`);
+    }
+
+    res.json({ message: 'Foto removida do jardim' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/photos/:id/react', authMiddleware, async (req, res) => {
