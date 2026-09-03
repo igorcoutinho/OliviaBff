@@ -12,33 +12,70 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    env:
+      DEPLOY_HOST: ${{ secrets.HOSTINGER_SSH_HOST || 'srv542.hstgr.io' }}
+      DEPLOY_USER: u384431467
+      DEPLOY_PATH: /home/u384431467/domains/api.minhasfotos.net/public_html
+      HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+      HOSTINGER_DOMAIN: api.minhasfotos.net
+      HOSTINGER_USERNAME: u384431467
+      HOSTINGER_API_BASE: https://developers.hostinger.com
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install zip
-        run: sudo apt-get update && sudo apt-get install -y zip
+      - name: Instalar sshpass e rsync
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass rsync
 
-      - name: Deploy to Hostinger
+      - name: Upload via rsync (SSH)
         env:
-          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
-          HOSTINGER_USERNAME: u384431467
-          HOSTINGER_DOMAIN: api.minhasfotos.net
+          SSHPASS: ${{ secrets.HOSTINGER_SSH_PASS }}
         run: |
-          chmod +x scripts/deploy-hostinger.sh
-          ./scripts/deploy-hostinger.sh
+          sshpass -e rsync -az --delete \
+            --exclude 'node_modules/' \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.env' \
+            --exclude '.env.*' \
+            --exclude '*.zip' \
+            --exclude '.DS_Store' \
+            --exclude 'data/' \
+            --exclude 'uploads/' \
+            -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+            . \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
+
+      - name: npm install no servidor
+        env:
+          SSHPASS: ${{ secrets.HOSTINGER_SSH_PASS }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "cd '${DEPLOY_PATH}' && npm install --production --prefer-offline 2>&1 | tail -20"
+
+      - name: Reiniciar app via Hostinger API
+        run: |
+          CODE=$(curl -sS -o /tmp/restart.json -w "%{http_code}" -X POST \
+            "${HOSTINGER_API_BASE}/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/restart" \
+            -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
+            -H "Accept: application/json")
+          echo "HTTP ${CODE}"
+          cat /tmp/restart.json || true
+          [[ "$CODE" == "200" || "$CODE" == "204" ]]
 
       - name: Health check
         run: |
-          for i in 1 2 3 4 5 6; do
-            code=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 20 "https://api.minhasfotos.net/api/health" || true)
-            echo "attempt $i -> HTTP $code"
+          for i in $(seq 1 8); do
+            code=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 20 \
+              "https://api.minhasfotos.net/api/health" || echo "000")
+            echo "tentativa $i → HTTP $code"
             if [ "$code" = "200" ]; then
               cat /tmp/health.json
               exit 0
             fi
-            sleep 10
+            sleep 15
           done
           echo "Health check falhou"
           cat /tmp/health.json || true
