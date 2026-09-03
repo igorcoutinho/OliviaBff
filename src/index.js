@@ -261,7 +261,7 @@ app.post('/api/photos', authMiddleware, upload.single('photo'), async (req, res)
 });
 
 app.get('/api/photos/feed', authMiddleware, async (req, res) => {
-  if (String(req.user.username || '').toLowerCase() === 'teste.conta') {
+  if (String(req.user.username || '').toLowerCase() === 'conta.teste') {
     return res.json([]);
   }
 
