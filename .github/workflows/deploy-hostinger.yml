@@ -31,7 +31,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.HOSTINGER_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p 65002 -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Upload via rsync (SSH)
         run: |
@@ -45,13 +45,13 @@ jobs:
             --exclude '.DS_Store' \
             --exclude 'data/' \
             --exclude 'uploads/' \
-            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            -e "ssh -i ~/.ssh/deploy_key -p 65002 -o StrictHostKeyChecking=no" \
             . \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
 
       - name: npm install no servidor
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+          ssh -i ~/.ssh/deploy_key -p 65002 -o StrictHostKeyChecking=no \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "cd '${DEPLOY_PATH}' && npm install --production --prefer-offline 2>&1 | tail -20"
 
