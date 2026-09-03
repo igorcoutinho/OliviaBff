@@ -50,36 +50,68 @@ if [[ -z "$URL" || -z "$AUTH_KEY" || -z "$REST_AUTH_KEY" ]]; then
   exit 1
 fi
 
-TARGET="${URL%/}/${ARCHIVE_NAME}?override=true"
+tus_upload() {
+  local url="$1" auth="$2" rest_auth="$3" file="$4" archive="$5" size="$6"
+  local target="${url%/}/${archive}?override=true"
+  local max_attempts=5 attempt=1
 
-echo "==> Criando upload TUS"
-CREATE_CODE="$(curl -sS -o /tmp/hostinger-tus-create.txt -w "%{http_code}" -X POST "$TARGET" \
-  -H "X-Auth: ${AUTH_KEY}" \
-  -H "X-Auth-Rest: ${REST_AUTH_KEY}" \
-  -H "Tus-Resumable: 1.0.0" \
-  -H "Upload-Length: ${SIZE}" \
-  -H "Upload-Offset: 0")"
+  while [[ $attempt -le $max_attempts ]]; do
+    echo "==> Criando upload TUS (tentativa ${attempt}/${max_attempts})"
+    CREATE_CODE="$(curl -sS --max-time 60 --connect-timeout 30 \
+      -o /tmp/hostinger-tus-create.txt -w "%{http_code}" -X POST "$target" \
+      -H "X-Auth: ${auth}" \
+      -H "X-Auth-Rest: ${rest_auth}" \
+      -H "Tus-Resumable: 1.0.0" \
+      -H "Upload-Length: ${size}" \
+      -H "Upload-Offset: 0" 2>/tmp/hostinger-tus-err.txt || echo "000")"
 
-if [[ "$CREATE_CODE" != "201" && "$CREATE_CODE" != "200" ]]; then
-  echo "Falha ao criar upload TUS (HTTP ${CREATE_CODE})"
-  cat /tmp/hostinger-tus-create.txt || true
+    if [[ "$CREATE_CODE" == "201" || "$CREATE_CODE" == "200" ]]; then
+      echo "==> Enviando archive"
+      PATCH_CODE="$(curl -sS --max-time 120 --connect-timeout 30 \
+        -o /tmp/hostinger-tus-patch.txt -w "%{http_code}" -X PATCH "$target" \
+        -H "X-Auth: ${auth}" \
+        -H "X-Auth-Rest: ${rest_auth}" \
+        -H "Tus-Resumable: 1.0.0" \
+        -H "Content-Type: application/offset+octet-stream" \
+        -H "Upload-Offset: 0" \
+        --data-binary @"${file}" 2>>/tmp/hostinger-tus-err.txt || echo "000")"
+
+      if [[ "$PATCH_CODE" == "204" || "$PATCH_CODE" == "200" ]]; then
+        echo "==> Upload concluído"
+        return 0
+      fi
+      echo "Falha no PATCH TUS (HTTP ${PATCH_CODE})"
+      cat /tmp/hostinger-tus-patch.txt || true
+    else
+      echo "Falha no POST TUS (HTTP ${CREATE_CODE})"
+      cat /tmp/hostinger-tus-create.txt || true
+      cat /tmp/hostinger-tus-err.txt || true
+    fi
+
+    attempt=$((attempt + 1))
+    if [[ $attempt -le $max_attempts ]]; then
+      echo "Aguardando 30s antes de tentar novamente..."
+      sleep 30
+
+      echo "==> Gerando nova URL de upload"
+      local new_json
+      new_json="$(curl -sS --max-time 30 -X POST "${API_BASE}/api/hosting/v1/files/upload-urls" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        -H "Accept: application/json" \
+        -d "{\"username\":\"${USERNAME}\",\"domain\":\"${DOMAIN}\"}")"
+      url="$(echo "$new_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("data",d); print(p.get("url") or "")')"
+      auth="$(echo "$new_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("data",d); print(p.get("auth_key") or "")')"
+      rest_auth="$(echo "$new_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("data",d); print(p.get("rest_auth_key") or "")')"
+      target="${url%/}/${archive}?override=true"
+    fi
+  done
+
+  echo "==> Upload falhou após ${max_attempts} tentativas"
   exit 1
-fi
+}
 
-echo "==> Enviando archive"
-PATCH_CODE="$(curl -sS -o /tmp/hostinger-tus-patch.txt -w "%{http_code}" -X PATCH "$TARGET" \
-  -H "X-Auth: ${AUTH_KEY}" \
-  -H "X-Auth-Rest: ${REST_AUTH_KEY}" \
-  -H "Tus-Resumable: 1.0.0" \
-  -H "Content-Type: application/offset+octet-stream" \
-  -H "Upload-Offset: 0" \
-  --data-binary @"${ARCHIVE_PATH}")"
-
-if [[ "$PATCH_CODE" != "204" && "$PATCH_CODE" != "200" ]]; then
-  echo "Falha no upload TUS (HTTP ${PATCH_CODE})"
-  cat /tmp/hostinger-tus-patch.txt || true
-  exit 1
-fi
+tus_upload "$URL" "$AUTH_KEY" "$REST_AUTH_KEY" "$ARCHIVE_PATH" "$ARCHIVE_NAME" "$SIZE"
 
 echo "==> Iniciando build Node.js"
 BUILD_JSON="$(curl -sS -X POST \
