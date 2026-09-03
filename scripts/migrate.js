@@ -13,15 +13,15 @@ async function main() {
   const config = mysqlUrl
     ? mysqlUrl
     : {
-        host: process.env.MYSQL_HOST || 'srv542.hstgr.io',
+        host: process.env.MYSQL_HOST || '127.0.0.1',
         port: Number(process.env.MYSQL_PORT || 3306),
-        user: process.env.MYSQL_USER || 'u384431467_admin_remember',
-        password: process.env.MYSQL_PASSWORD,
-        database: process.env.MYSQL_DATABASE || 'u384431467_db_remember',
+        user: process.env.MYSQL_USER || 'olivia',
+        password: process.env.MYSQL_PASSWORD || 'olivia123',
+        database: process.env.MYSQL_DATABASE || 'festa_olivia',
         multipleStatements: true,
       };
 
-  if (!mysqlUrl && !process.env.MYSQL_PASSWORD) {
+  if (!mysqlUrl && !process.env.MYSQL_PASSWORD && !config.password) {
     console.error('Defina MYSQL_PASSWORD ou DATABASE_URL (mysql://...) para rodar o migrate.');
     process.exit(1);
   }

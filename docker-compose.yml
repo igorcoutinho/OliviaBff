@@ -1,0 +1,53 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: festa-olivia-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: olivia123
+      MYSQL_DATABASE: festa_olivia
+      MYSQL_USER: olivia
+      MYSQL_PASSWORD: olivia123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.mysql.sql:/docker-entrypoint-initdb.d/01-init.sql
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uolivia", "-polivia123"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    container_name: festa-olivia-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: festa-olivia-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin123;
+      mc mb local/festa-olivia --ignore-existing;
+      mc anonymous set download local/festa-olivia;
+      exit 0;
+      "
+
+volumes:
+  mysql_data:
+  minio_data:

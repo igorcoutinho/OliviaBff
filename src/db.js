@@ -36,13 +36,19 @@ if (dialect === 'mysql') {
   });
 }
 
-function toMysqlPlaceholders(sql) {
-  return sql.replace(/\$(\d+)/g, '?');
+function toMysql(sql, params = []) {
+  const mysqlParams = [];
+  const mysqlSql = sql.replace(/\$(\d+)/g, (_, n) => {
+    mysqlParams.push(params[Number(n) - 1]);
+    return '?';
+  });
+  return { sql: mysqlSql, params: mysqlParams };
 }
 
 async function query(sql, params = []) {
   if (dialect === 'mysql') {
-    const [rows, fields] = await pool.query(toMysqlPlaceholders(sql), params);
+    const converted = toMysql(sql, params);
+    const [rows, fields] = await pool.query(converted.sql, converted.params);
     if (Array.isArray(rows)) {
       return { rows, fields, affectedRows: rows.affectedRows };
     }
