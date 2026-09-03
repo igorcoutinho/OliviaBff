@@ -55,15 +55,11 @@ jobs:
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "cd '${DEPLOY_PATH}' && npm install --production --prefer-offline 2>&1 | tail -20"
 
-      - name: Reiniciar app via Hostinger API
+      - name: Reiniciar app via SSH
         run: |
-          CODE=$(curl -sS -o /tmp/restart.json -w "%{http_code}" -X POST \
-            "${HOSTINGER_API_BASE}/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/restart" \
-            -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
-            -H "Accept: application/json")
-          echo "HTTP ${CODE}"
-          cat /tmp/restart.json || true
-          [[ "$CODE" == "200" || "$CODE" == "204" ]]
+          ssh -i ~/.ssh/deploy_key -p 65002 -o StrictHostKeyChecking=no \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "mkdir -p '${DEPLOY_PATH}/tmp' && touch '${DEPLOY_PATH}/tmp/restart.txt' && echo 'Restart sinalizado'"
 
       - name: Health check
         run: |
