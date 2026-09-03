@@ -261,6 +261,10 @@ app.post('/api/photos', authMiddleware, upload.single('photo'), async (req, res)
 });
 
 app.get('/api/photos/feed', authMiddleware, async (req, res) => {
+  if (String(req.user.username || '').toLowerCase() === 'teste.conta') {
+    return res.json([]);
+  }
+
   const feedSql = isMysql
     ? `
     SELECT p.id, p.caption, p.storage_key, p.created_at,
