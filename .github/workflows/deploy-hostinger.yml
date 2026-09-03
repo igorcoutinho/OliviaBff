@@ -17,6 +17,9 @@ jobs:
       DEPLOY_HOST: srv542.hstgr.io
       DEPLOY_USER: u384431467
       HOSTINGER_DOMAIN: api.minhasfotos.net
+      HOSTINGER_USERNAME: u384431467
+      HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+      HOSTINGER_API_BASE: https://developers.hostinger.com
 
     steps:
       - name: Checkout
@@ -38,7 +41,7 @@ jobs:
             set ssl:verify-certificate false;
             open -u '${DEPLOY_USER}','${FTP_PASS}' ftp://${DEPLOY_HOST};
             lcd .;
-            cd /domains/${HOSTINGER_DOMAIN}/public_html;
+            cd domains/${HOSTINGER_DOMAIN}/public_html;
             mirror --reverse --delete --verbose \
               --exclude-glob .git/ \
               --exclude-glob .github/ \
@@ -51,6 +54,15 @@ jobs:
               --exclude-glob data/ \
               . .;
           "
+
+      - name: Reiniciar app via API
+        run: |
+          CODE=$(curl -sS -o /tmp/restart.json -w "%{http_code}" -X POST \
+            "${HOSTINGER_API_BASE}/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/restart" \
+            -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
+            -H "Accept: application/json")
+          echo "Restart HTTP ${CODE}"
+          cat /tmp/restart.json || true
 
       - name: Health check
         run: |
