@@ -1,19 +1,19 @@
-require('dotenv').config();
+import 'dotenv/config';
 console.log('Iniciando backend...');
 
-const multer = require('multer');
-const express = require('express');
-const cors = require('cors');
+import express from 'express';
+import cors from 'cors';
+import multer from 'multer';
 
-const { ensureSchemaPatches } = require('./db');
-const storage = () => require('./storage');
-const { requireAppSignature } = require('./middlewares/appSignature');
+import { ensureSchemaPatches } from './db';
+import { ensureBucket } from './storage';
+import { requireAppSignature } from './middlewares/appSignature';
 
-const authRoutes = require('./routes/auth.routes');
-const profileRoutes = require('./routes/profile.routes');
-const videosRoutes = require('./routes/videos.routes');
-const photosRoutes = require('./routes/photos.routes');
-const adminRoutes = require('./routes/admin.routes');
+import authRoutes from './routes/auth.routes';
+import profileRoutes from './routes/profile.routes';
+import videosRoutes from './routes/videos.routes';
+import photosRoutes from './routes/photos.routes';
+import adminRoutes from './routes/admin.routes';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -32,22 +32,22 @@ app.use('/api/videos', videosRoutes);
 app.use('/api/photos', photosRoutes);
 app.use('/api/admin', adminRoutes);
 
-app.use((err, _req, res, _next) => {
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({ error: 'Arquivo muito grande' });
+    res.status(413).json({ error: 'Arquivo muito grande' });
+    return;
   }
   res.status(400).json({ error: err.message || 'Erro interno' });
 });
 
-async function start() {
-  app.listen(PORT, '0.0.0.0', () => {
+async function start(): Promise<void> {
+  app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`🌸 Jardim Encantado da Olivia — http://0.0.0.0:${PORT}`);
   });
-
   try {
     await ensureSchemaPatches();
-    await storage().ensureBucket();
-  } catch (err) {
+    await ensureBucket();
+  } catch (err: any) {
     console.warn(`⚠️  Inicialização parcial: ${err.message}`);
   }
 }

@@ -1,0 +1,73 @@
+import { query, newId } from '../db';
+
+export interface UserRow {
+  id: string;
+  full_name: string;
+  username: string;
+  password_hash?: string;
+  avatar_key?: string | null;
+  created_at: string;
+}
+
+export interface UserStats {
+  photos: number;
+  videos: number;
+}
+
+export async function findUserById(id: string): Promise<UserRow | null> {
+  const { rows } = await query<UserRow>(
+    'SELECT id, full_name, username, avatar_key, created_at FROM users WHERE id = $1',
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+export async function findUserByUsername(username: string): Promise<UserRow | null> {
+  const { rows } = await query<UserRow>(
+    'SELECT id, full_name, username, password_hash, avatar_key, created_at FROM users WHERE username = $1',
+    [username.toLowerCase().trim()],
+  );
+  return rows[0] ?? null;
+}
+
+export async function usernameExists(username: string): Promise<boolean> {
+  const { rows } = await query<{ id: string }>(
+    'SELECT id FROM users WHERE username = $1',
+    [username],
+  );
+  return rows.length > 0;
+}
+
+export async function createUser(
+  fullName: string,
+  username: string,
+  passwordHash: string,
+): Promise<UserRow> {
+  const id = newId();
+  await query(
+    'INSERT INTO users (id, full_name, username, password_hash) VALUES ($1, $2, $3, $4)',
+    [id, fullName.trim(), username, passwordHash],
+  );
+  const { rows } = await query<UserRow>(
+    'SELECT id, full_name, username, created_at FROM users WHERE id = $1',
+    [id],
+  );
+  return rows[0]!;
+}
+
+export async function setUserAvatarKey(userId: string, key: string | null): Promise<void> {
+  await query('UPDATE users SET avatar_key = $1 WHERE id = $2', [key, userId]);
+}
+
+export async function getUserStats(userId: string): Promise<UserStats> {
+  const { rows } = await query<{ photos: string; videos: string }>(
+    `SELECT
+      (SELECT COUNT(*) FROM photos WHERE user_id = $1) AS photos,
+      (SELECT COUNT(*) FROM videos WHERE user_id = $1) AS videos`,
+    [userId],
+  );
+  return {
+    photos: Number(rows[0]?.photos ?? 0),
+    videos: Number(rows[0]?.videos ?? 0),
+  };
+}
