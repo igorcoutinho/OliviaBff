@@ -18,7 +18,6 @@ jobs:
       DEPLOY_USER: u384431467
       HOSTINGER_DOMAIN: api.minhasfotos.net
       HOSTINGER_USERNAME: u384431467
-      HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
       HOSTINGER_API_BASE: https://developers.hostinger.com
       ARCHIVE_NAME: olivia-bff.zip
 
@@ -56,72 +55,73 @@ jobs:
             open -u '${DEPLOY_USER}','${FTP_PASS}' ftp://${DEPLOY_HOST};
             put -O 'domains/${HOSTINGER_DOMAIN}/public_html' '${ARCHIVE_NAME}';
           "
-          echo "Upload concluído"
+          echo "Upload concluido"
 
       - name: Triggar build Node.js via API
+        env:
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
         run: |
           BUILD_JSON=$(curl -sS -X POST \
             "${HOSTINGER_API_BASE}/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/builds" \
             -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json" \
-            -d "{
-              \"node_version\": 20,
-              \"app_type\": \"express\",
-              \"root_directory\": \".\",
-              \"output_directory\": \".\",
-              \"build_script\": \"\",
-              \"entry_file\": \"src/index.js\",
-              \"package_manager\": \"npm\",
-              \"source_type\": \"archive\",
-              \"source_options\": { \"archive_path\": \"${ARCHIVE_NAME}\" }
-            }")
+            -d '{"node_version":20,"app_type":"express","root_directory":".","output_directory":".","build_script":"","entry_file":"src/index.js","package_manager":"npm","source_type":"archive","source_options":{"archive_path":"olivia-bff.zip"}}')
           echo "$BUILD_JSON"
           BUILD_UUID=$(echo "$BUILD_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("data",d); print(p.get("uuid",""))')
-          if [[ -z "$BUILD_UUID" ]]; then
+          if [ -z "$BUILD_UUID" ]; then
             echo "Falha ao iniciar build"
             exit 1
           fi
-          echo "BUILD_UUID=${BUILD_UUID}" >> $GITHUB_ENV
+          echo "BUILD_UUID=${BUILD_UUID}" >> "$GITHUB_ENV"
           echo "Build iniciado: ${BUILD_UUID}"
 
       - name: Aguardar build concluir
+        env:
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
         run: |
-          for i in $(seq 1 60); do
-            sleep 10
-            STATE=$(curl -sS \
-              "${HOSTINGER_API_BASE}/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/builds?per_page=5" \
-              -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
-              -H "Accept: application/json" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-items=d.get('data',d)
-arr=items if isinstance(items,list) else items.get('data',[])
-match=next((x for x in arr if x.get('uuid')=='${BUILD_UUID}'),None)
-print((match or {}).get('state',''))
-")
-            echo "Tentativa $i — estado: ${STATE:-desconhecido}"
-            if [[ "$STATE" == "completed" ]]; then
-              echo "Build concluído com sucesso"
-              exit 0
-            fi
-            if [[ "$STATE" == "failed" ]]; then
-              echo "Build falhou"
-              curl -sS \
-                "${HOSTINGER_API_BASE}/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/builds/${BUILD_UUID}/logs" \
-                -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("data",d); print(p.get("logs",""))'
-              exit 1
-            fi
-          done
-          echo "Timeout aguardando build"
-          exit 1
+          python3 - << 'PYEOF'
+          import json, os, sys, time, urllib.request
+
+          base   = os.environ['HOSTINGER_API_BASE']
+          user   = os.environ['HOSTINGER_USERNAME']
+          domain = os.environ['HOSTINGER_DOMAIN']
+          token  = os.environ['HOSTINGER_API_TOKEN']
+          uuid   = os.environ['BUILD_UUID']
+
+          url = f"{base}/api/hosting/v1/accounts/{user}/websites/{domain}/nodejs/builds?per_page=5"
+          logs_url = f"{base}/api/hosting/v1/accounts/{user}/websites/{domain}/nodejs/builds/{uuid}/logs"
+
+          for attempt in range(60):
+              time.sleep(10)
+              req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+              data = json.loads(urllib.request.urlopen(req).read())
+              items = data.get("data", data)
+              arr = items if isinstance(items, list) else items.get("data", [])
+              match = next((x for x in arr if x.get("uuid") == uuid), None)
+              state = (match or {}).get("state", "")
+              print(f"Tentativa {attempt+1} - estado: {state or 'desconhecido'}", flush=True)
+              if state == "completed":
+                  print("Build concluido com sucesso")
+                  sys.exit(0)
+              if state == "failed":
+                  req2 = urllib.request.Request(logs_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+                  logs = json.loads(urllib.request.urlopen(req2).read())
+                  p = logs.get("data", logs)
+                  print(p.get("logs", json.dumps(logs, indent=2)))
+                  print("Build falhou")
+                  sys.exit(1)
+
+          print("Timeout aguardando build")
+          sys.exit(1)
+          PYEOF
 
       - name: Health check
         run: |
           for i in $(seq 1 10); do
             code=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 20 \
               "https://api.minhasfotos.net/api/health" || echo "000")
-            echo "Tentativa $i → HTTP $code"
+            echo "Tentativa ${i} -> HTTP ${code}"
             if [ "$code" = "200" ]; then
               cat /tmp/health.json
               exit 0
