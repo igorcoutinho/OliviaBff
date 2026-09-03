@@ -26,14 +26,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Instalar sshpass e rsync
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass rsync
+      - name: Configurar chave SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.HOSTINGER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Upload via rsync (SSH)
-        env:
-          SSHPASS: ${{ secrets.HOSTINGER_SSH_PASS }}
         run: |
-          sshpass -e rsync -az --delete \
+          rsync -az --delete \
             --exclude 'node_modules/' \
             --exclude '.git/' \
             --exclude '.github/' \
@@ -43,15 +45,13 @@ jobs:
             --exclude '.DS_Store' \
             --exclude 'data/' \
             --exclude 'uploads/' \
-            -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             . \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
 
       - name: npm install no servidor
-        env:
-          SSHPASS: ${{ secrets.HOSTINGER_SSH_PASS }}
         run: |
-          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "cd '${DEPLOY_PATH}' && npm install --production --prefer-offline 2>&1 | tail -20"
 
