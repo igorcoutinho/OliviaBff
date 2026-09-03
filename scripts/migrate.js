@@ -9,8 +9,9 @@ async function main() {
   const sql = fs.readFileSync(schemaPath, 'utf8');
 
   const url = process.env.DATABASE_URL;
-  const config = url
-    ? url
+  const mysqlUrl = url?.startsWith('mysql') ? url : null;
+  const config = mysqlUrl
+    ? mysqlUrl
     : {
         host: process.env.MYSQL_HOST || 'srv542.hstgr.io',
         port: Number(process.env.MYSQL_PORT || 3306),
@@ -20,8 +21,8 @@ async function main() {
         multipleStatements: true,
       };
 
-  if (!url && !process.env.MYSQL_PASSWORD) {
-    console.error('Defina MYSQL_PASSWORD ou DATABASE_URL no .env para rodar o migrate.');
+  if (!mysqlUrl && !process.env.MYSQL_PASSWORD) {
+    console.error('Defina MYSQL_PASSWORD ou DATABASE_URL (mysql://...) para rodar o migrate.');
     process.exit(1);
   }
 
