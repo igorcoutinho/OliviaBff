@@ -14,56 +14,47 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      DEPLOY_HOST: ${{ secrets.HOSTINGER_SSH_HOST || 'srv542.hstgr.io' }}
+      DEPLOY_HOST: srv542.hstgr.io
       DEPLOY_USER: u384431467
-      DEPLOY_PATH: /home/u384431467/domains/api.minhasfotos.net/public_html
-      HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
       HOSTINGER_DOMAIN: api.minhasfotos.net
-      HOSTINGER_USERNAME: u384431467
-      HOSTINGER_API_BASE: https://developers.hostinger.com
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configurar chave SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.HOSTINGER_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p 65002 -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+      - name: Instalar lftp
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
 
-      - name: Upload via rsync (SSH)
+      - name: Upload via FTP
+        env:
+          FTP_PASS: ${{ secrets.HOSTINGER_FTP_PASS }}
         run: |
-          rsync -az --delete \
-            --exclude 'node_modules/' \
-            --exclude '.git/' \
-            --exclude '.github/' \
-            --exclude '.env' \
-            --exclude '.env.*' \
-            --exclude '*.zip' \
-            --exclude '.DS_Store' \
-            --exclude 'data/' \
-            --exclude 'uploads/' \
-            -e "ssh -i ~/.ssh/deploy_key -p 65002 -o StrictHostKeyChecking=no" \
-            . \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
-
-      - name: npm install no servidor
-        run: |
-          ssh -i ~/.ssh/deploy_key -p 65002 -o StrictHostKeyChecking=no \
-            "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "cd '${DEPLOY_PATH}' && npm install --production --prefer-offline 2>&1 | tail -20"
-
-      - name: Reiniciar app via SSH
-        run: |
-          ssh -i ~/.ssh/deploy_key -p 65002 -o StrictHostKeyChecking=no \
-            "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "mkdir -p '${DEPLOY_PATH}/tmp' && touch '${DEPLOY_PATH}/tmp/restart.txt' && echo 'Restart sinalizado'"
+          mkdir -p tmp && touch tmp/restart.txt
+          lftp -c "
+            set net:timeout 30;
+            set net:max-retries 5;
+            set net:reconnect-interval-base 5;
+            set ftp:ssl-allow true;
+            set ssl:verify-certificate false;
+            open -u '${DEPLOY_USER}','${FTP_PASS}' ftp://${DEPLOY_HOST};
+            lcd .;
+            cd /domains/${HOSTINGER_DOMAIN}/public_html;
+            mirror --reverse --delete --verbose \
+              --exclude-glob .git/ \
+              --exclude-glob .github/ \
+              --exclude-glob node_modules/ \
+              --exclude-glob .env \
+              --exclude-glob '.env.*' \
+              --exclude-glob '*.zip' \
+              --exclude-glob .DS_Store \
+              --exclude-glob uploads/ \
+              --exclude-glob data/ \
+              . .;
+          "
 
       - name: Health check
         run: |
-          for i in $(seq 1 8); do
+          for i in $(seq 1 10); do
             code=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 20 \
               "https://api.minhasfotos.net/api/health" || echo "000")
             echo "tentativa $i → HTTP $code"
