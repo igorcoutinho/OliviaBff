@@ -12,7 +12,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       DEPLOY_HOST: srv542.hstgr.io
       DEPLOY_USER: u384431467
@@ -20,56 +20,108 @@ jobs:
       HOSTINGER_USERNAME: u384431467
       HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
       HOSTINGER_API_BASE: https://developers.hostinger.com
+      ARCHIVE_NAME: olivia-bff.zip
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Instalar lftp
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+      - name: Instalar zip e lftp
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zip lftp
 
-      - name: Upload via FTP
+      - name: Empacotar backend
+        run: |
+          zip -r "${ARCHIVE_NAME}" . \
+            -x "node_modules/*" \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x ".env" \
+            -x ".env.*" \
+            -x "*.zip" \
+            -x ".DS_Store" \
+            -x "uploads/*" \
+            -x "data/*"
+          echo "Archive: $(du -sh ${ARCHIVE_NAME})"
+
+      - name: Upload zip via FTP
         env:
           FTP_PASS: ${{ secrets.HOSTINGER_FTP_PASS }}
         run: |
-          mkdir -p tmp && touch tmp/restart.txt
           lftp -c "
-            set net:timeout 30;
+            set net:timeout 60;
             set net:max-retries 5;
             set net:reconnect-interval-base 5;
             set ftp:ssl-allow true;
             set ssl:verify-certificate false;
             open -u '${DEPLOY_USER}','${FTP_PASS}' ftp://${DEPLOY_HOST};
-            lcd .;
-            cd domains/${HOSTINGER_DOMAIN}/public_html;
-            mirror --reverse --delete --verbose \
-              --exclude-glob .git/ \
-              --exclude-glob .github/ \
-              --exclude-glob node_modules/ \
-              --exclude-glob .env \
-              --exclude-glob '.env.*' \
-              --exclude-glob '*.zip' \
-              --exclude-glob .DS_Store \
-              --exclude-glob uploads/ \
-              --exclude-glob data/ \
-              . .;
+            put -O 'domains/${HOSTINGER_DOMAIN}/public_html' '${ARCHIVE_NAME}';
           "
+          echo "Upload concluído"
 
-      - name: Reiniciar app via API
+      - name: Triggar build Node.js via API
         run: |
-          CODE=$(curl -sS -o /tmp/restart.json -w "%{http_code}" -X POST \
-            "${HOSTINGER_API_BASE}/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/restart" \
+          BUILD_JSON=$(curl -sS -X POST \
+            "${HOSTINGER_API_BASE}/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/builds" \
             -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
-            -H "Accept: application/json")
-          echo "Restart HTTP ${CODE}"
-          cat /tmp/restart.json || true
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -d "{
+              \"node_version\": 20,
+              \"app_type\": \"express\",
+              \"root_directory\": \".\",
+              \"output_directory\": \".\",
+              \"build_script\": \"\",
+              \"entry_file\": \"src/index.js\",
+              \"package_manager\": \"npm\",
+              \"source_type\": \"archive\",
+              \"source_options\": { \"archive_path\": \"${ARCHIVE_NAME}\" }
+            }")
+          echo "$BUILD_JSON"
+          BUILD_UUID=$(echo "$BUILD_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("data",d); print(p.get("uuid",""))')
+          if [[ -z "$BUILD_UUID" ]]; then
+            echo "Falha ao iniciar build"
+            exit 1
+          fi
+          echo "BUILD_UUID=${BUILD_UUID}" >> $GITHUB_ENV
+          echo "Build iniciado: ${BUILD_UUID}"
+
+      - name: Aguardar build concluir
+        run: |
+          for i in $(seq 1 60); do
+            sleep 10
+            STATE=$(curl -sS \
+              "${HOSTINGER_API_BASE}/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/builds?per_page=5" \
+              -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
+              -H "Accept: application/json" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+items=d.get('data',d)
+arr=items if isinstance(items,list) else items.get('data',[])
+match=next((x for x in arr if x.get('uuid')=='${BUILD_UUID}'),None)
+print((match or {}).get('state',''))
+")
+            echo "Tentativa $i — estado: ${STATE:-desconhecido}"
+            if [[ "$STATE" == "completed" ]]; then
+              echo "Build concluído com sucesso"
+              exit 0
+            fi
+            if [[ "$STATE" == "failed" ]]; then
+              echo "Build falhou"
+              curl -sS \
+                "${HOSTINGER_API_BASE}/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/builds/${BUILD_UUID}/logs" \
+                -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("data",d); print(p.get("logs",""))'
+              exit 1
+            fi
+          done
+          echo "Timeout aguardando build"
+          exit 1
 
       - name: Health check
         run: |
           for i in $(seq 1 10); do
             code=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 20 \
               "https://api.minhasfotos.net/api/health" || echo "000")
-            echo "tentativa $i → HTTP $code"
+            echo "Tentativa $i → HTTP $code"
             if [ "$code" = "200" ]; then
               cat /tmp/health.json
               exit 0
