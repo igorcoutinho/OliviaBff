@@ -14,6 +14,8 @@ const region = process.env.AWS_REGION || 'us-east-1';
 
 let s3Instance: S3Client | null = null;
 
+const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
 function getS3(): S3Client {
   if (s3Instance) return s3Instance;
 
@@ -75,7 +77,20 @@ export async function uploadFile(key: string, buffer: Buffer, contentType: strin
 }
 
 export async function getFileUrl(key: string, expiresIn = 3600): Promise<string> {
-  return getSignedUrl(getS3(), new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn });
+  const now = Date.now();
+  const cached = signedUrlCache.get(key);
+  // Reusa a mesma URL enquanto faltar mais de 10% do TTL (evita redownload no app)
+  if (cached && cached.expiresAt - now > expiresIn * 100) {
+    return cached.url;
+  }
+
+  const url = await getSignedUrl(
+    getS3(),
+    new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+    { expiresIn },
+  );
+  signedUrlCache.set(key, { url, expiresAt: now + expiresIn * 1000 });
+  return url;
 }
 
 export async function deleteFile(key: string): Promise<void> {

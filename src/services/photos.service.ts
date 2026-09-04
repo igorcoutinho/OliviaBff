@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { newId } from '../db';
 import { uploadFile, getFileUrl, deleteFile } from '../storage';
+import { optimizeImage } from '../lib/optimizeImage';
 import type { UploadedFile, MediaItem, FeedItem, FeedPage, ReactionEntry } from '../types';
 import {
   insertPhoto,
@@ -20,7 +21,7 @@ import {
 
 export type { MediaItem, FeedItem, FeedPage };
 
-const ALLOWED_REACTIONS = ['❤️', '🥰', '😍', '😊', '👏', '👀', '🎉', '✨', '🌸', '🧚'];
+const ALLOWED_REACTIONS = ['❤️', '🥰', '😍', '😂', '😊', '👏', '👀', '🎉', '✨', '🌸', '🧚', '🫶'];
 const REVIEW_USER_IDS = new Set(['1b70a665-8cc7-444a-9d2b-0583fff7b2af']);
 
 function parseReactions(raw: unknown): ReactionEntry[] {
@@ -61,10 +62,10 @@ export async function createPost(params: {
 
   for (let i = 0; i < photoFiles.length; i++) {
     const f = photoFiles[i]!;
-    const ext = f.originalname?.split('.').pop() || 'jpg';
-    const key = `photos/${uuidv4()}.${ext}`;
-    await uploadFile(key, f.buffer, f.mimetype);
-    uploadedMedia.push({ type: 'image', key, size: f.size, order: i });
+    const optimized = await optimizeImage(f.buffer, 'photo');
+    const key = `photos/${uuidv4()}.jpg`;
+    await uploadFile(key, optimized.buffer, optimized.contentType);
+    uploadedMedia.push({ type: 'image', key, size: optimized.size, order: i });
   }
 
   if (videoFile) {

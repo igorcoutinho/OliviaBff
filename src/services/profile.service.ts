@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { uploadFile } from '../storage';
+import { optimizeImage } from '../lib/optimizeImage';
 import type { UploadedFile, ProfileData, PublicUser } from '../types';
 import { getUserById } from './auth.service';
 import { setUserAvatarKey, getUserStats } from '../repositories/users.repository';
@@ -22,9 +23,9 @@ export async function updateAvatar(params: {
   if (!file.mimetype.startsWith('image/'))
     throw Object.assign(new Error('Apenas imagens são permitidas'), { status: 400 });
 
-  const ext = file.originalname?.split('.').pop() || 'jpg';
-  const key = `avatars/${userId}/${uuidv4()}.${ext}`;
-  await uploadFile(key, file.buffer, file.mimetype);
+  const optimized = await optimizeImage(file.buffer, 'avatar');
+  const key = `avatars/${userId}/${uuidv4()}.jpg`;
+  await uploadFile(key, optimized.buffer, optimized.contentType);
   await setUserAvatarKey(userId, key);
   return (await getUserById(userId))!;
 }

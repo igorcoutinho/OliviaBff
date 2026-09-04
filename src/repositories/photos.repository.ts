@@ -77,9 +77,7 @@ export async function getMediaByPhotoId(photoId: string): Promise<PhotoMediaRow[
 
 export async function getMediaByPhotoIds(photoIds: string[]): Promise<PhotoMediaRow[]> {
   if (photoIds.length === 0) return [];
-  const placeholders = isMysql
-    ? photoIds.map(() => '?').join(',')
-    : photoIds.map((_, i) => `$${i + 1}`).join(',');
+  const placeholders = photoIds.map((_, i) => `$${i + 1}`).join(',');
   const { rows } = await query<PhotoMediaRow>(
     `SELECT id, photo_id, type, storage_key, order_index FROM photo_media WHERE photo_id IN (${placeholders}) ORDER BY order_index ASC`,
     photoIds,
@@ -110,9 +108,9 @@ export async function getFeedRows(cursor: string | undefined, limit: number): Pr
            ), JSON_ARRAY()) AS reactions
     FROM photos p
     JOIN users u ON u.id = p.user_id
-    ${cursor ? 'WHERE p.created_at < ?' : ''}
+    ${cursor ? 'WHERE p.created_at < $1' : ''}
     ORDER BY p.created_at DESC
-    LIMIT ?
+    LIMIT ${cursor ? '$2' : '$1'}
   `
     : `
     SELECT p.id, p.user_id, p.caption, p.storage_key, p.created_at,
