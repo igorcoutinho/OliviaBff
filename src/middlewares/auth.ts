@@ -5,8 +5,7 @@ import {
   userIsApproved,
   userIsBlocked,
 } from '../repositories/users.repository';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
+import { JWT_SECRET } from '../lib/secrets';
 
 export interface JwtPayload {
   userId: string;

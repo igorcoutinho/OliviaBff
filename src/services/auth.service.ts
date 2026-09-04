@@ -13,10 +13,9 @@ import {
   userIsApproved,
   type UserRow,
 } from '../repositories/users.repository';
+import { JWT_SECRET } from '../lib/secrets';
 
 export type { PublicUser, AuthResult };
-
-const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
 export async function formatUser(row: UserRow | null): Promise<PublicUser | null> {
   if (!row) return null;

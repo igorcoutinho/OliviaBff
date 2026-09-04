@@ -22,10 +22,12 @@ import {
   getPanelSettings,
   updatePanelSettings,
 } from '../repositories/panelSettings.repository';
+import {
+  JWT_SECRET,
+  PANEL_ADMIN_PASSWORD,
+  PANEL_ADMIN_USER,
+} from '../lib/secrets';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
-const PANEL_ADMIN_USER = (process.env.PANEL_ADMIN_USER || 'admin').toLowerCase().trim();
-const PANEL_ADMIN_PASSWORD = process.env.PANEL_ADMIN_PASSWORD || 'REDACTED';
 const PANEL_ADMIN_ID = 'panel-admin';
 
 export interface PanelUser {
