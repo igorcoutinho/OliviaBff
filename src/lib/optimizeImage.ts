@@ -1,10 +1,11 @@
 import sharp from 'sharp';
 
-export type ImageKind = 'photo' | 'avatar';
+export type ImageKind = 'photo' | 'avatar' | 'thumb';
 
 const PRESETS: Record<ImageKind, { maxWidth: number; quality: number }> = {
   photo: { maxWidth: 1280, quality: 72 },
   avatar: { maxWidth: 256, quality: 68 },
+  thumb: { maxWidth: 96, quality: 55 },
 };
 
 export interface OptimizedImage {
@@ -24,7 +25,9 @@ export async function optimizeImage(
   const meta = await sharp(input).metadata();
   let pipeline = sharp(input).rotate();
 
-  if (meta.width && meta.width > maxWidth) {
+  if (kind === 'thumb') {
+    pipeline = pipeline.resize({ width: maxWidth, height: maxWidth, fit: 'cover' });
+  } else if (meta.width && meta.width > maxWidth) {
     pipeline = pipeline.resize({ width: maxWidth, withoutEnlargement: true });
   }
 

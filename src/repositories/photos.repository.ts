@@ -17,6 +17,7 @@ export interface PhotoMediaRow {
   photo_id: string;
   type: 'image' | 'video';
   storage_key: string;
+  thumbnail_key?: string | null;
   order_index: number;
 }
 
@@ -49,10 +50,11 @@ export async function insertPhotoMedia(
   key: string,
   orderIndex: number,
   size: number,
+  thumbnailKey: string | null = null,
 ): Promise<void> {
   await query(
-    'INSERT INTO photo_media (id, photo_id, type, storage_key, order_index, size) VALUES ($1, $2, $3, $4, $5, $6)',
-    [id, photoId, type, key, orderIndex, size],
+    'INSERT INTO photo_media (id, photo_id, type, storage_key, thumbnail_key, order_index, size) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    [id, photoId, type, key, thumbnailKey, orderIndex, size],
   );
 }
 
@@ -69,7 +71,7 @@ export async function findPhotoByIdAndUser(
 
 export async function getMediaByPhotoId(photoId: string): Promise<PhotoMediaRow[]> {
   const { rows } = await query<PhotoMediaRow>(
-    'SELECT id, photo_id, type, storage_key, order_index FROM photo_media WHERE photo_id = $1 ORDER BY order_index ASC',
+    'SELECT id, photo_id, type, storage_key, thumbnail_key, order_index FROM photo_media WHERE photo_id = $1 ORDER BY order_index ASC',
     [photoId],
   );
   return rows;
@@ -79,7 +81,7 @@ export async function getMediaByPhotoIds(photoIds: string[]): Promise<PhotoMedia
   if (photoIds.length === 0) return [];
   const placeholders = photoIds.map((_, i) => `$${i + 1}`).join(',');
   const { rows } = await query<PhotoMediaRow>(
-    `SELECT id, photo_id, type, storage_key, order_index FROM photo_media WHERE photo_id IN (${placeholders}) ORDER BY order_index ASC`,
+    `SELECT id, photo_id, type, storage_key, thumbnail_key, order_index FROM photo_media WHERE photo_id IN (${placeholders}) ORDER BY order_index ASC`,
     photoIds,
   );
   return rows;

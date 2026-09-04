@@ -5,6 +5,7 @@ import {
   deletePhoto,
   addReaction,
   removeReaction,
+  notifySave,
 } from '../controllers/photos.controller';
 import { authMiddleware } from '../middlewares/auth';
 import { upload } from '../middlewares/upload';
@@ -21,5 +22,6 @@ router.get('/feed', authMiddleware, getFeed);
 router.delete('/:id', authMiddleware, deletePhoto);
 router.post('/:id/react', authMiddleware, addReaction);
 router.delete('/:id/react', authMiddleware, removeReaction);
+router.post('/:id/notify-save', authMiddleware, notifySave);
 
 export default router;

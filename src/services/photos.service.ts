@@ -19,6 +19,10 @@ import {
   type PhotoRow,
   type PhotoMediaRow,
 } from '../repositories/photos.repository';
+import {
+  getPhotoOwnerId,
+  upsertNotification,
+} from '../repositories/notifications.repository';
 
 export type { MediaItem, FeedItem, FeedPage };
 
@@ -59,21 +63,44 @@ export async function createPost(params: {
   if (videoFile && !videoFile.mimetype.startsWith('video/'))
     throw Object.assign(new Error('Apenas vídeos são permitidos no campo video'), { status: 400 });
 
-  const uploadedMedia: { type: 'image' | 'video'; key: string; size: number; order: number }[] = [];
+  const uploadedMedia: {
+    type: 'image' | 'video';
+    key: string;
+    thumbnailKey: string | null;
+    size: number;
+    order: number;
+  }[] = [];
 
   for (let i = 0; i < photoFiles.length; i++) {
     const f = photoFiles[i]!;
     const optimized = await optimizeImage(f.buffer, 'photo');
     const key = `photos/${uuidv4()}.jpg`;
     await uploadFile(key, optimized.buffer, optimized.contentType);
-    uploadedMedia.push({ type: 'image', key, size: optimized.size, order: i });
+
+    const thumb = await optimizeImage(f.buffer, 'thumb');
+    const thumbnailKey = `photos/thumbs/${uuidv4()}.jpg`;
+    await uploadFile(thumbnailKey, thumb.buffer, thumb.contentType);
+
+    uploadedMedia.push({
+      type: 'image',
+      key,
+      thumbnailKey,
+      size: optimized.size,
+      order: i,
+    });
   }
 
   if (videoFile) {
     const optimized = await optimizeVideo(videoFile.buffer);
     const key = `photos/video-${uuidv4()}.mp4`;
     await uploadFile(key, optimized.buffer, optimized.contentType);
-    uploadedMedia.push({ type: 'video', key, size: optimized.size, order: photoFiles.length });
+    uploadedMedia.push({
+      type: 'video',
+      key,
+      thumbnailKey: null,
+      size: optimized.size,
+      order: photoFiles.length,
+    });
   }
 
   const id = newId();
@@ -82,7 +109,7 @@ export async function createPost(params: {
 
   await insertPhoto(id, userId, caption, primaryKey, totalSize);
   for (const m of uploadedMedia) {
-    await insertPhotoMedia(newId(), id, m.type, m.key, m.order, m.size);
+    await insertPhotoMedia(newId(), id, m.type, m.key, m.order, m.size, m.thumbnailKey);
   }
   return id;
 }
@@ -189,7 +216,9 @@ export async function deletePost(params: { postId: string; userId: string }): Pr
   await deletePhotoByIdAndUser(postId, userId);
 
   const keysToDelete =
-    mediaRows.length > 0 ? mediaRows.map((m) => m.storage_key) : [photo.storage_key];
+    mediaRows.length > 0
+      ? mediaRows.flatMap((m) => [m.storage_key, m.thumbnail_key].filter(Boolean) as string[])
+      : [photo.storage_key];
   for (const key of keysToDelete) {
     try {
       await deleteFile(key);
@@ -210,8 +239,46 @@ export async function upsertReaction(params: {
   if (!(await photoExists(photoId)))
     throw Object.assign(new Error('Foto não encontrada'), { status: 404 });
   await repoUpsertReaction(photoId, userId, emoji);
+
+  const ownerId = await getPhotoOwnerId(photoId);
+  if (!ownerId || ownerId === userId) return;
+
+  try {
+    await upsertNotification({
+      recipientId: ownerId,
+      actorId: userId,
+      photoId,
+      type: 'reaction',
+      emoji,
+    });
+  } catch (err: any) {
+    console.error(`⚠️  Falha ao criar notificação de reação (${photoId}):`, err?.message || err);
+  }
 }
 
 export async function deleteReaction(params: { photoId: string; userId: string }): Promise<void> {
   await repoDeleteReaction(params.photoId, params.userId);
+}
+
+export async function notifyPhotoSaved(params: {
+  photoId: string;
+  userId: string;
+}): Promise<void> {
+  const { photoId, userId } = params;
+  if (!(await photoExists(photoId)))
+    throw Object.assign(new Error('Foto não encontrada'), { status: 404 });
+
+  const ownerId = await getPhotoOwnerId(photoId);
+  if (!ownerId || ownerId === userId) return;
+
+  try {
+    await upsertNotification({
+      recipientId: ownerId,
+      actorId: userId,
+      photoId,
+      type: 'save',
+    });
+  } catch (err: any) {
+    console.error(`⚠️  Falha ao criar notificação de save (${photoId}):`, err?.message || err);
+  }
 }

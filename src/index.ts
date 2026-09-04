@@ -13,6 +13,7 @@ import authRoutes from './routes/auth.routes';
 import profileRoutes from './routes/profile.routes';
 import videosRoutes from './routes/videos.routes';
 import photosRoutes from './routes/photos.routes';
+import notificationsRoutes from './routes/notifications.routes';
 import adminRoutes from './routes/admin.routes';
 
 const app = express();
@@ -30,6 +31,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/videos', videosRoutes);
 app.use('/api/photos', photosRoutes);
+app.use('/api/notifications', notificationsRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

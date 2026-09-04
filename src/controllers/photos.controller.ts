@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { createPost, getFeedPage, deletePost, upsertReaction, deleteReaction } from '../services/photos.service';
+import { createPost, getFeedPage, deletePost, upsertReaction, deleteReaction, notifyPhotoSaved } from '../services/photos.service';
 
 export async function uploadPhoto(req: Request, res: Response): Promise<void> {
   try {
@@ -49,6 +49,15 @@ export async function removeReaction(req: Request, res: Response): Promise<void>
   try {
     await deleteReaction({ photoId: req.params['id'] as string, userId: req.user.userId });
     res.json({ message: 'Reação removida' });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+}
+
+export async function notifySave(req: Request, res: Response): Promise<void> {
+  try {
+    await notifyPhotoSaved({ photoId: req.params['id'] as string, userId: req.user.userId });
+    res.json({ message: 'Notificação de salvamento registrada' });
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message });
   }
