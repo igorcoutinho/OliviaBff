@@ -1,6 +1,6 @@
 import { query, isMysql, newId } from '../db';
 
-export type NotificationType = 'reaction' | 'save';
+export type NotificationType = 'reaction' | 'save' | 'comment';
 
 export interface NotificationRow {
   id: string;
@@ -9,6 +9,7 @@ export interface NotificationRow {
   photo_id: string;
   type: NotificationType;
   emoji: string | null;
+  target_id: string | null;
   read_at: string | null;
   created_at: string;
   actor_full_name: string;
@@ -25,25 +26,48 @@ export async function upsertNotification(params: {
   photoId: string;
   type: NotificationType;
   emoji?: string | null;
+  targetId?: string | null;
 }): Promise<void> {
-  const { recipientId, actorId, photoId, type, emoji = null } = params;
+  const { recipientId, actorId, photoId, type, emoji = null, targetId = '' } = params;
   if (recipientId === actorId) return;
 
   if (isMysql) {
     await query(
-      `INSERT IGNORE INTO notifications (id, recipient_id, actor_id, photo_id, type, emoji, read_at, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NULL, CURRENT_TIMESTAMP)`,
-      [newId(), recipientId, actorId, photoId, type, emoji],
+      `INSERT IGNORE INTO notifications (id, recipient_id, actor_id, photo_id, type, emoji, target_id, read_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, CURRENT_TIMESTAMP)`,
+      [newId(), recipientId, actorId, photoId, type, emoji, targetId || ''],
     );
     return;
   }
 
   await query(
-    `INSERT INTO notifications (id, recipient_id, actor_id, photo_id, type, emoji, read_at, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, NOW())
-     ON CONFLICT (recipient_id, actor_id, photo_id, type) DO NOTHING`,
-    [newId(), recipientId, actorId, photoId, type, emoji],
+    `INSERT INTO notifications (id, recipient_id, actor_id, photo_id, type, emoji, target_id, read_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NOW())
+     ON CONFLICT (recipient_id, actor_id, photo_id, type, target_id) DO NOTHING`,
+    [newId(), recipientId, actorId, photoId, type, emoji, targetId || ''],
   );
+}
+
+export async function insertNotification(params: {
+  recipientId: string;
+  actorId: string;
+  photoId: string;
+  type: NotificationType;
+  emoji?: string | null;
+  targetId?: string | null;
+}): Promise<void> {
+  const { recipientId, actorId, photoId, type, emoji = null, targetId = '' } = params;
+  if (recipientId === actorId) return;
+
+  await query(
+    `INSERT INTO notifications (id, recipient_id, actor_id, photo_id, type, emoji, target_id, read_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, ${isMysql ? 'CURRENT_TIMESTAMP' : 'NOW()'})`,
+    [newId(), recipientId, actorId, photoId, type, emoji, targetId || ''],
+  );
+}
+
+export async function deleteNotificationsByTarget(targetId: string): Promise<void> {
+  await query('DELETE FROM notifications WHERE target_id = $1', [targetId]);
 }
 
 export async function listNotifications(params: {

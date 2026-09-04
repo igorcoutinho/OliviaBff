@@ -66,6 +66,63 @@ export async function query<T = Record<string, any>>(
   return pool.query(sql, params) as Promise<QueryResult<T>>;
 }
 
+async function ensureMysqlColumn(
+  table: string,
+  column: string,
+  definition: string,
+): Promise<boolean> {
+  const [cols] = await pool.query(
+    `SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?`,
+    [table, column],
+  );
+  if (Number(cols[0].c) > 0) return false;
+  await pool.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  return true;
+}
+
+async function ensureMysqlIndex(
+  name: string,
+  table: string,
+  columns: string,
+): Promise<void> {
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS c FROM information_schema.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND INDEX_NAME = ?`,
+    [table, name],
+  );
+  if (Number(rows[0].c) > 0) return;
+  await pool.query(`CREATE INDEX ${name} ON ${table} ${columns}`);
+}
+
+async function backfillMysqlCounters(): Promise<void> {
+  await pool.query(`
+    UPDATE photos p
+    SET comments_count = (
+      SELECT COUNT(*) FROM comments c WHERE c.photo_id = p.id
+    )
+  `);
+  await pool.query(`
+    UPDATE photos p
+    SET likes_count = (
+      SELECT COUNT(*) FROM reactions r WHERE r.photo_id = p.id
+    )
+  `);
+  await pool.query(`
+    UPDATE comments c
+    SET likes_count = (
+      SELECT COUNT(*) FROM comment_votes v WHERE v.comment_id = c.id AND v.vote = 1
+    ),
+    dislikes_count = (
+      SELECT COUNT(*) FROM comment_votes v WHERE v.comment_id = c.id AND v.vote = -1
+    )
+  `);
+}
+
 export async function ensureSchemaPatches(): Promise<void> {
   if (isMysql) {
     const [cols] = await pool.query(
@@ -106,11 +163,139 @@ export async function ensureSchemaPatches(): Promise<void> {
         photo_id VARCHAR(36) NOT NULL,
         type VARCHAR(32) NOT NULL,
         emoji VARCHAR(16) NULL,
+        target_id VARCHAR(36) NOT NULL DEFAULT '',
         read_at TIMESTAMP NULL,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY uq_notifications_event (recipient_id, actor_id, photo_id, type),
+        UNIQUE KEY uq_notifications_event (recipient_id, actor_id, photo_id, type, target_id),
         INDEX idx_notifications_recipient (recipient_id, created_at),
         INDEX idx_notifications_unread (recipient_id, read_at)
+      )
+    `);
+    const [targetCols] = await pool.query(
+      `SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'notifications'
+         AND COLUMN_NAME = 'target_id'`,
+    );
+    if (Number(targetCols[0].c) === 0) {
+      try {
+        await pool.query('ALTER TABLE notifications DROP INDEX uq_notifications_event');
+      } catch {
+        /* index may not exist */
+      }
+      await pool.query(
+        `ALTER TABLE notifications ADD COLUMN target_id VARCHAR(36) NOT NULL DEFAULT ''`,
+      );
+      await pool.query(
+        `ALTER TABLE notifications ADD UNIQUE KEY uq_notifications_event (recipient_id, actor_id, photo_id, type, target_id)`,
+      );
+    }
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS comments (
+        id VARCHAR(36) PRIMARY KEY,
+        photo_id VARCHAR(36) NOT NULL,
+        user_id VARCHAR(36) NOT NULL,
+        body TEXT NOT NULL,
+        likes_count INT NOT NULL DEFAULT 0,
+        dislikes_count INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_comments_photo_created (photo_id, created_at, id),
+        INDEX idx_comments_photo_likes (photo_id, likes_count, created_at, id)
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS comment_votes (
+        id VARCHAR(36) PRIMARY KEY,
+        comment_id VARCHAR(36) NOT NULL,
+        user_id VARCHAR(36) NOT NULL,
+        vote TINYINT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_comment_votes_user (comment_id, user_id),
+        INDEX idx_comment_votes_comment_vote (comment_id, vote)
+      )
+    `);
+
+    const addedPhotoComments = await ensureMysqlColumn(
+      'photos',
+      'comments_count',
+      'INT NOT NULL DEFAULT 0',
+    );
+    const addedPhotoLikes = await ensureMysqlColumn(
+      'photos',
+      'likes_count',
+      'INT NOT NULL DEFAULT 0',
+    );
+    const addedCommentLikes = await ensureMysqlColumn(
+      'comments',
+      'likes_count',
+      'INT NOT NULL DEFAULT 0',
+    );
+    const addedCommentDislikes = await ensureMysqlColumn(
+      'comments',
+      'dislikes_count',
+      'INT NOT NULL DEFAULT 0',
+    );
+
+    await ensureMysqlIndex('idx_photos_feed', 'photos', '(created_at, id)');
+    await ensureMysqlIndex('idx_reactions_photo_created', 'reactions', '(photo_id, created_at)');
+    await ensureMysqlIndex(
+      'idx_comments_photo_created',
+      'comments',
+      '(photo_id, created_at, id)',
+    );
+    await ensureMysqlIndex(
+      'idx_comments_photo_likes',
+      'comments',
+      '(photo_id, likes_count, created_at, id)',
+    );
+    await ensureMysqlIndex(
+      'idx_comment_votes_comment_vote',
+      'comment_votes',
+      '(comment_id, vote)',
+    );
+
+    if (
+      addedPhotoComments ||
+      addedPhotoLikes ||
+      addedCommentLikes ||
+      addedCommentDislikes
+    ) {
+      await backfillMysqlCounters();
+    }
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_versions (
+        id VARCHAR(36) PRIMARY KEY,
+        version VARCHAR(32) NOT NULL,
+        platform VARCHAR(16) NOT NULL DEFAULT 'all',
+        status VARCHAR(16) NOT NULL DEFAULT 'inativo',
+        title VARCHAR(200) NULL,
+        description_ios TEXT NULL,
+        description_android TEXT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_app_versions_status_platform (status, platform),
+        INDEX idx_app_versions_version (version)
+      )
+    `);
+    await ensureMysqlColumn('app_versions', 'description_ios', 'TEXT NULL');
+    await ensureMysqlColumn('app_versions', 'description_android', 'TEXT NULL');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_version_settings (
+        id TINYINT PRIMARY KEY,
+        contact_name VARCHAR(120) NULL,
+        contact_info TEXT NULL,
+        store_url_ios VARCHAR(500) NULL,
+        store_url_android VARCHAR(500) NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`
+      INSERT IGNORE INTO app_version_settings (id, contact_name, contact_info)
+      VALUES (
+        1,
+        'Igor',
+        'Se precisar de ajuda para atualizar, entre em contato com o Igor.'
       )
     `);
     return;
@@ -144,16 +329,114 @@ export async function ensureSchemaPatches(): Promise<void> {
       photo_id TEXT NOT NULL,
       type TEXT NOT NULL,
       emoji TEXT,
+      target_id TEXT NOT NULL DEFAULT '',
       read_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  try {
+    await pool.query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_id TEXT NOT NULL DEFAULT \'\'');
+  } catch {
+    /* already exists */
+  }
+  await pool.query('DROP INDEX IF EXISTS uq_notifications_event');
   await pool.query(
-    'CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_event ON notifications(recipient_id, actor_id, photo_id, type)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_event ON notifications(recipient_id, actor_id, photo_id, type, target_id)',
   );
   await pool.query(
     'CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient_id, created_at DESC)',
   );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS comments (
+      id TEXT PRIMARY KEY,
+      photo_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      body TEXT NOT NULL,
+      likes_count INTEGER NOT NULL DEFAULT 0,
+      dislikes_count INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'ALTER TABLE photos ADD COLUMN IF NOT EXISTS comments_count INTEGER NOT NULL DEFAULT 0',
+  );
+  await pool.query(
+    'ALTER TABLE photos ADD COLUMN IF NOT EXISTS likes_count INTEGER NOT NULL DEFAULT 0',
+  );
+  await pool.query(
+    'ALTER TABLE comments ADD COLUMN IF NOT EXISTS likes_count INTEGER NOT NULL DEFAULT 0',
+  );
+  await pool.query(
+    'ALTER TABLE comments ADD COLUMN IF NOT EXISTS dislikes_count INTEGER NOT NULL DEFAULT 0',
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_photos_feed ON photos(created_at DESC, id DESC)',
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_reactions_photo_created ON reactions(photo_id, created_at DESC)',
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_comments_photo_created ON comments(photo_id, created_at DESC, id DESC)',
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_comments_photo_likes ON comments(photo_id, likes_count DESC, created_at DESC, id DESC)',
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS comment_votes (
+      id TEXT PRIMARY KEY,
+      comment_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      vote INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE UNIQUE INDEX IF NOT EXISTS uq_comment_votes_user ON comment_votes(comment_id, user_id)',
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_comment_votes_comment_vote ON comment_votes(comment_id, vote)',
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_versions (
+      id TEXT PRIMARY KEY,
+      version TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT 'all',
+      status TEXT NOT NULL DEFAULT 'inativo',
+      title TEXT,
+      description_ios TEXT,
+      description_android TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'ALTER TABLE app_versions ADD COLUMN IF NOT EXISTS description_ios TEXT',
+  );
+  await pool.query(
+    'ALTER TABLE app_versions ADD COLUMN IF NOT EXISTS description_android TEXT',
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_app_versions_status_platform ON app_versions(status, platform)',
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_version_settings (
+      id INTEGER PRIMARY KEY,
+      contact_name TEXT,
+      contact_info TEXT,
+      store_url_ios TEXT,
+      store_url_android TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    INSERT INTO app_version_settings (id, contact_name, contact_info)
+    VALUES (
+      1,
+      'Igor',
+      'Se precisar de ajuda para atualizar, entre em contato com o Igor.'
+    )
+    ON CONFLICT (id) DO NOTHING
+  `);
 }
 
 export function newId(): string {

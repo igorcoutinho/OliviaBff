@@ -1,4 +1,5 @@
 import { query, isMysql, newId } from '../db';
+import type { FeedCursor } from '../lib/cursor';
 
 export interface PhotoRow {
   id: string;
@@ -10,6 +11,8 @@ export interface PhotoRow {
   username: string;
   avatar_key?: string | null;
   reactions: any;
+  comments_count?: number | string;
+  likes_count?: number | string;
 }
 
 export interface PhotoMediaRow {
@@ -19,6 +22,15 @@ export interface PhotoMediaRow {
   storage_key: string;
   thumbnail_key?: string | null;
   order_index: number;
+}
+
+export interface PhotoPreviewRow {
+  id: string;
+  caption: string;
+  full_name: string;
+  storage_key: string;
+  thumbnail_key: string | null;
+  comments_count: number | string;
 }
 
 export interface ReactionRow {
@@ -95,10 +107,49 @@ export async function deletePhotoByIdAndUser(photoId: string, userId: string): P
   await query('DELETE FROM photos WHERE id = $1 AND user_id = $2', [photoId, userId]);
 }
 
-export async function getFeedRows(cursor: string | undefined, limit: number): Promise<PhotoRow[]> {
+export async function getPhotoPreviewRow(photoId: string): Promise<PhotoPreviewRow | null> {
+  const { rows } = await query<PhotoPreviewRow>(
+    `SELECT p.id, p.caption, u.full_name,
+            p.storage_key, p.comments_count,
+            (
+              SELECT COALESCE(pm.thumbnail_key, pm.storage_key)
+              FROM photo_media pm
+              WHERE pm.photo_id = p.id AND pm.type = 'image'
+              ORDER BY pm.order_index ASC
+              LIMIT 1
+            ) AS thumbnail_key
+     FROM photos p
+     JOIN users u ON u.id = p.user_id
+     WHERE p.id = $1`,
+    [photoId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function getFeedRows(
+  cursor: FeedCursor | null,
+  limit: number,
+): Promise<PhotoRow[]> {
+  const values: unknown[] = [];
+  let where = '';
+
+  if (cursor?.createdAt) {
+    if (cursor.id) {
+      values.push(cursor.createdAt, cursor.id);
+      where = `WHERE (p.created_at < $1 OR (p.created_at = $1 AND p.id < $2))`;
+    } else {
+      values.push(cursor.createdAt);
+      where = `WHERE p.created_at < $1`;
+    }
+  }
+
+  values.push(limit);
+  const limitParam = `$${values.length}`;
+
   const feedSql = isMysql
     ? `
     SELECT p.id, p.user_id, p.caption, p.storage_key, p.created_at,
+           p.comments_count, p.likes_count,
            u.full_name, u.username, u.avatar_key,
            COALESCE((
              SELECT JSON_ARRAYAGG(
@@ -110,12 +161,13 @@ export async function getFeedRows(cursor: string | undefined, limit: number): Pr
            ), JSON_ARRAY()) AS reactions
     FROM photos p
     JOIN users u ON u.id = p.user_id
-    ${cursor ? 'WHERE p.created_at < $1' : ''}
-    ORDER BY p.created_at DESC
-    LIMIT ${cursor ? '$2' : '$1'}
+    ${where}
+    ORDER BY p.created_at DESC, p.id DESC
+    LIMIT ${limitParam}
   `
     : `
     SELECT p.id, p.user_id, p.caption, p.storage_key, p.created_at,
+           p.comments_count, p.likes_count,
            u.full_name, u.username, u.avatar_key,
            COALESCE(
              json_agg(
@@ -126,14 +178,13 @@ export async function getFeedRows(cursor: string | undefined, limit: number): Pr
     JOIN users u ON u.id = p.user_id
     LEFT JOIN reactions r ON r.photo_id = p.id
     LEFT JOIN users ru ON ru.id = r.user_id
-    ${cursor ? 'WHERE p.created_at < $1' : ''}
+    ${where}
     GROUP BY p.id, u.full_name, u.username, u.avatar_key
-    ORDER BY p.created_at DESC
-    LIMIT ${cursor ? '$2' : '$1'}
+    ORDER BY p.created_at DESC, p.id DESC
+    LIMIT ${limitParam}
   `;
 
-  const params = cursor ? [cursor, limit] : [limit];
-  const { rows } = await query<PhotoRow>(feedSql, params);
+  const { rows } = await query<PhotoRow>(feedSql, values);
   return rows;
 }
 
@@ -142,24 +193,50 @@ export async function photoExists(photoId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+export async function findReaction(
+  photoId: string,
+  userId: string,
+): Promise<{ id: string; emoji: string } | null> {
+  const { rows } = await query<{ id: string; emoji: string }>(
+    'SELECT id, emoji FROM reactions WHERE photo_id = $1 AND user_id = $2',
+    [photoId, userId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function upsertReaction(
   photoId: string,
   userId: string,
   emoji: string,
-): Promise<void> {
-  if (isMysql) {
+): Promise<'created' | 'updated'> {
+  const existing = await findReaction(photoId, userId);
+  if (existing) {
     await query(
-      `INSERT INTO reactions (id, photo_id, user_id, emoji) VALUES ($1, $2, $3, $4) ON DUPLICATE KEY UPDATE emoji = VALUES(emoji)`,
-      [newId(), photoId, userId, emoji],
+      'UPDATE reactions SET emoji = $1 WHERE photo_id = $2 AND user_id = $3',
+      [emoji, photoId, userId],
     );
-  } else {
-    await query(
-      `INSERT INTO reactions (id, photo_id, user_id, emoji) VALUES ($1, $2, $3, $4) ON CONFLICT (photo_id, user_id) DO UPDATE SET emoji = $4`,
-      [newId(), photoId, userId, emoji],
-    );
+    return 'updated';
   }
+
+  await query(
+    'INSERT INTO reactions (id, photo_id, user_id, emoji) VALUES ($1, $2, $3, $4)',
+    [newId(), photoId, userId, emoji],
+  );
+  await query(
+    'UPDATE photos SET likes_count = likes_count + 1 WHERE id = $1',
+    [photoId],
+  );
+  return 'created';
 }
 
-export async function deleteReaction(photoId: string, userId: string): Promise<void> {
+export async function deleteReaction(photoId: string, userId: string): Promise<boolean> {
+  const existing = await findReaction(photoId, userId);
+  if (!existing) return false;
+
   await query('DELETE FROM reactions WHERE photo_id = $1 AND user_id = $2', [photoId, userId]);
+  await query(
+    'UPDATE photos SET likes_count = GREATEST(likes_count - 1, 0) WHERE id = $1',
+    [photoId],
+  );
+  return true;
 }

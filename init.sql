@@ -24,6 +24,8 @@ CREATE TABLE photos (
   caption TEXT DEFAULT '',
   storage_key VARCHAR(500) NOT NULL,
   size BIGINT NOT NULL DEFAULT 0,
+  comments_count INTEGER NOT NULL DEFAULT 0,
+  likes_count INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -39,4 +41,6 @@ CREATE TABLE reactions (
 CREATE INDEX idx_videos_user ON videos(user_id);
 CREATE INDEX idx_photos_user ON photos(user_id);
 CREATE INDEX idx_photos_created ON photos(created_at DESC);
+CREATE INDEX idx_photos_feed ON photos(created_at DESC, id DESC);
 CREATE INDEX idx_reactions_photo ON reactions(photo_id);
+CREATE INDEX idx_reactions_photo_created ON reactions(photo_id, created_at DESC);

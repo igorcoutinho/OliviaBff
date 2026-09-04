@@ -10,7 +10,7 @@ import {
 
 export interface NotificationItem {
   id: string;
-  type: 'reaction' | 'save';
+  type: 'reaction' | 'save' | 'comment';
   emoji: string | null;
   message: string;
   created_at: string;
@@ -39,6 +39,10 @@ export function buildNotificationMessage(row: NotificationRow): string {
 
   if (row.type === 'save') {
     return `salvou sua foto${snippet ? `:${snippet}` : ''} no álbum.`;
+  }
+
+  if (row.type === 'comment') {
+    return `comentou na sua postagem${snippet ? `:${snippet}` : ''}.`;
   }
 
   if (row.emoji) {

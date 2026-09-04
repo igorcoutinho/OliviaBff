@@ -48,6 +48,19 @@ export interface ReactionEntry {
   user_id: string;
 }
 
+export interface CommentPreview {
+  id: string;
+  body: string;
+  likeCount: number;
+  myVote: 1 | -1 | null;
+  author: {
+    id: string;
+    full_name: string;
+    username: string;
+    avatar_url: string | null;
+  };
+}
+
 export interface FeedItem {
   id: string;
   caption: string;
@@ -63,6 +76,9 @@ export interface FeedItem {
   isMine: boolean;
   reactions: ReactionEntry[];
   myReaction: string | null;
+  commentsCount: number;
+  likesCount: number;
+  topComment: CommentPreview | null;
 }
 
 export interface FeedPage {

@@ -3,7 +3,7 @@ import { newId } from '../db';
 import { uploadFile, getFileUrl, deleteFile } from '../storage';
 import { optimizeImage } from '../lib/optimizeImage';
 import { optimizeVideo } from '../lib/optimizeVideo';
-import type { UploadedFile, MediaItem, FeedItem, FeedPage, ReactionEntry } from '../types';
+import type { UploadedFile, MediaItem, FeedItem, FeedPage, ReactionEntry, CommentPreview } from '../types';
 import {
   insertPhoto,
   insertPhotoMedia,
@@ -23,6 +23,8 @@ import {
   getPhotoOwnerId,
   upsertNotification,
 } from '../repositories/notifications.repository';
+import { getTopCommentsForPhotos } from '../repositories/comments.repository';
+import { decodeFeedCursor, encodeFeedCursor } from '../lib/cursor';
 
 export type { MediaItem, FeedItem, FeedPage };
 
@@ -126,20 +128,45 @@ export async function getFeedPage(params: {
   }
 
   const safeLimit = Math.min(parseInt(String(limit ?? 20)), 50);
-  const rows = await getFeedRows(cursor, safeLimit + 1);
+  const decoded = decodeFeedCursor(cursor);
+  const rows = await getFeedRows(decoded, safeLimit + 1);
 
   const hasMore = rows.length > safeLimit;
   const pageRows = hasMore ? rows.slice(0, safeLimit) : rows;
 
   const mediaMap = await buildMediaMap(pageRows.map((p) => p.id));
   const avatarUrlMap = await buildAvatarUrlMap(pageRows);
-  const items = await Promise.all(
-    pageRows.map((p) => buildFeedItem(p, userId, mediaMap, avatarUrlMap)),
+  const photoIds = pageRows.map((p) => p.id);
+  const topComments = await getTopCommentsForPhotos({ photoIds, viewerId: userId });
+
+  const topAvatarKeys = Object.values(topComments)
+    .filter(Boolean)
+    .map((c) => ({ user_id: c!.user_id, avatar_key: c!.avatar_key }));
+  const topAvatarUrlMap: Record<string, string> = {};
+  await Promise.all(
+    topAvatarKeys
+      .filter((e, i, arr) => e.avatar_key && arr.findIndex((x) => x.user_id === e.user_id) === i)
+      .map(async ({ user_id, avatar_key }) => {
+        topAvatarUrlMap[user_id] = await getFileUrl(avatar_key!, 86400);
+      }),
   );
 
+  const items = await Promise.all(
+    pageRows.map((p) =>
+      buildFeedItem(p, userId, mediaMap, avatarUrlMap, topComments, topAvatarUrlMap),
+    ),
+  );
+
+  const last = pageRows[pageRows.length - 1];
   return {
     items,
-    nextCursor: hasMore ? pageRows[pageRows.length - 1]!.created_at : null,
+    nextCursor:
+      hasMore && last
+        ? encodeFeedCursor({
+            createdAt: String(last.created_at),
+            id: last.id,
+          })
+        : null,
     hasMore,
   };
 }
@@ -176,6 +203,8 @@ async function buildFeedItem(
   requestingUserId: string,
   mediaMap: Record<string, PhotoMediaRow[]>,
   avatarUrlMap: Record<string, string>,
+  topComments: Record<string, import('../repositories/comments.repository').CommentRow | null>,
+  topAvatarUrlMap: Record<string, string>,
 ): Promise<FeedItem> {
   const reactions = parseReactions(p.reactions);
   const rawMedia = mediaMap[p.id] ?? [];
@@ -186,6 +215,25 @@ async function buildFeedItem(
           rawMedia.map(async (m) => ({ type: m.type, url: await getFileUrl(m.storage_key, 86400) })),
         )
       : [{ type: 'image', url: await getFileUrl(p.storage_key, 86400) }];
+
+  const top = topComments[p.id];
+  let topComment: CommentPreview | null = null;
+  if (top) {
+    const likeCount = Number(top.like_count ?? 0);
+    const rawVote = top.my_vote == null ? null : Number(top.my_vote);
+    topComment = {
+      id: top.id,
+      body: top.body,
+      likeCount,
+      myVote: rawVote === 1 || rawVote === -1 ? (rawVote as 1 | -1) : null,
+      author: {
+        id: top.user_id,
+        full_name: top.full_name,
+        username: top.username,
+        avatar_url: topAvatarUrlMap[top.user_id] ?? null,
+      },
+    };
+  }
 
   return {
     id: p.id,
@@ -202,6 +250,9 @@ async function buildFeedItem(
     media,
     reactions,
     myReaction: reactions.find((r) => r.user_id === requestingUserId)?.emoji ?? null,
+    commentsCount: Number(p.comments_count ?? 0),
+    likesCount: Number(p.likes_count ?? reactions.length),
+    topComment,
   };
 }
 
