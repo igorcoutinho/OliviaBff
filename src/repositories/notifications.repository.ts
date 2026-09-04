@@ -70,6 +70,13 @@ export async function deleteNotificationsByTarget(targetId: string): Promise<voi
   await query('DELETE FROM notifications WHERE target_id = $1', [targetId]);
 }
 
+export async function deleteNotificationsForUser(userId: string): Promise<void> {
+  await query(
+    'DELETE FROM notifications WHERE recipient_id = $1 OR actor_id = $1',
+    [userId],
+  );
+}
+
 export async function listNotifications(params: {
   recipientId: string;
   unreadOnly?: boolean;

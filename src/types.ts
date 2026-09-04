@@ -15,6 +15,8 @@ export interface PublicUser {
   username: string;
   created_at: string;
   avatar_url: string | null;
+  is_approved: boolean;
+  is_blocked: boolean;
 }
 
 export interface AuthResult {

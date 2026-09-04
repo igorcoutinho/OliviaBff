@@ -25,6 +25,7 @@ import {
 } from '../repositories/notifications.repository';
 import { getTopCommentsForPhotos } from '../repositories/comments.repository';
 import { decodeFeedCursor, encodeFeedCursor } from '../lib/cursor';
+import { logActivity } from '../lib/activity';
 
 export type { MediaItem, FeedItem, FeedPage };
 
@@ -113,6 +114,17 @@ export async function createPost(params: {
   for (const m of uploadedMedia) {
     await insertPhotoMedia(newId(), id, m.type, m.key, m.order, m.size, m.thumbnailKey);
   }
+  await logActivity({
+    actorId: userId,
+    action: 'photo_post',
+    targetType: 'photo',
+    targetId: id,
+    meta: {
+      caption: caption?.slice(0, 120) || '',
+      images: photoFiles.length,
+      hasVideo: Boolean(videoFile),
+    },
+  });
   return id;
 }
 
@@ -277,6 +289,12 @@ export async function deletePost(params: { postId: string; userId: string }): Pr
       console.warn(`⚠️  Falhou ao remover ${key} do storage: ${err.message}`);
     }
   }
+  await logActivity({
+    actorId: userId,
+    action: 'photo_delete',
+    targetType: 'photo',
+    targetId: postId,
+  });
 }
 
 export async function upsertReaction(params: {
@@ -290,6 +308,14 @@ export async function upsertReaction(params: {
   if (!(await photoExists(photoId)))
     throw Object.assign(new Error('Foto não encontrada'), { status: 404 });
   await repoUpsertReaction(photoId, userId, emoji);
+
+  await logActivity({
+    actorId: userId,
+    action: 'reaction',
+    targetType: 'photo',
+    targetId: photoId,
+    meta: { emoji },
+  });
 
   const ownerId = await getPhotoOwnerId(photoId);
   if (!ownerId || ownerId === userId) return;

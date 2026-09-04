@@ -309,6 +309,12 @@ export async function ensureSchemaPatches(): Promise<void> {
       'is_blocked',
       'TINYINT(1) NOT NULL DEFAULT 0',
     );
+    // DEFAULT 1: contas já existentes ficam liberadas; cadastros novos setam 0 no INSERT
+    await ensureMysqlColumn(
+      'users',
+      'is_approved',
+      'TINYINT(1) NOT NULL DEFAULT 1',
+    );
     await pool.query(`
       CREATE TABLE IF NOT EXISTS activity_logs (
         id VARCHAR(36) PRIMARY KEY,
@@ -322,6 +328,17 @@ export async function ensureSchemaPatches(): Promise<void> {
         INDEX idx_activity_logs_actor (actor_id, created_at),
         INDEX idx_activity_logs_action (action, created_at)
       )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS panel_settings (
+        id TINYINT PRIMARY KEY,
+        auto_approve_users TINYINT(1) NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`
+      INSERT IGNORE INTO panel_settings (id, auto_approve_users)
+      VALUES (1, 0)
     `);
     return;
   }
@@ -468,6 +485,9 @@ export async function ensureSchemaPatches(): Promise<void> {
   await pool.query(
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE',
   );
+  await pool.query(
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN NOT NULL DEFAULT TRUE',
+  );
   await pool.query(`
     CREATE TABLE IF NOT EXISTS activity_logs (
       id TEXT PRIMARY KEY,
@@ -485,6 +505,18 @@ export async function ensureSchemaPatches(): Promise<void> {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS idx_activity_logs_actor ON activity_logs(actor_id, created_at DESC)',
   );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS panel_settings (
+      id SMALLINT PRIMARY KEY,
+      auto_approve_users BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    INSERT INTO panel_settings (id, auto_approve_users)
+    VALUES (1, FALSE)
+    ON CONFLICT (id) DO NOTHING
+  `);
 }
 
 export function newId(): string {

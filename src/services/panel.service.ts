@@ -7,13 +7,21 @@ import {
   findUserById,
   listUsers,
   setUserBlocked,
+  setUserApproved,
   setUserPasswordHash,
   countUsers,
   countBlockedUsers,
+  countPendingUsers,
   userHasPanelAccess,
   userIsBlocked,
+  userIsApproved,
   type UserRow,
 } from '../repositories/users.repository';
+import { wipeUserPostedContent } from './userContent.service';
+import {
+  getPanelSettings,
+  updatePanelSettings,
+} from '../repositories/panelSettings.repository';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 const PANEL_ADMIN_USER = (process.env.PANEL_ADMIN_USER || 'admin').toLowerCase().trim();
@@ -28,6 +36,7 @@ export interface PanelUser {
   avatar_url: string | null;
   panel_access: boolean;
   is_blocked: boolean;
+  is_approved: boolean;
 }
 
 function adminUser(): PanelUser {
@@ -39,6 +48,7 @@ function adminUser(): PanelUser {
     avatar_url: null,
     panel_access: true,
     is_blocked: false,
+    is_approved: true,
   };
 }
 
@@ -51,6 +61,7 @@ async function formatPanelUser(row: UserRow): Promise<PanelUser> {
     avatar_url: row.avatar_key ? await getFileUrl(row.avatar_key) : null,
     panel_access: userHasPanelAccess(row),
     is_blocked: userIsBlocked(row),
+    is_approved: userIsApproved(row),
   };
 }
 
@@ -90,22 +101,29 @@ export async function panelMe(userId: string, isPanelAdmin?: boolean) {
 }
 
 export async function panelDashboard() {
-  const [users, blocked, activity] = await Promise.all([
+  const [users, blocked, pending, activity] = await Promise.all([
     countUsers(),
     countBlockedUsers(),
+    countPendingUsers(),
     listActivityLogs({ limit: 20, offset: 0 }),
   ]);
   return {
     users,
     blocked,
+    pending,
     recentActivity: activity.rows.map(mapActivity),
   };
 }
 
-export async function panelListUsers(search: string | undefined, page: number, pageSize: number) {
+export async function panelListUsers(
+  search: string | undefined,
+  page: number,
+  pageSize: number,
+  approved?: boolean,
+) {
   const limit = Math.min(Math.max(pageSize, 1), 100);
   const offset = Math.max(page - 1, 0) * limit;
-  const { rows, total } = await listUsers({ search, limit, offset });
+  const { rows, total } = await listUsers({ search, approved, limit, offset });
   const users = await Promise.all(rows.map(formatPanelUser));
   return { users, total, page, pageSize: limit };
 }
@@ -141,6 +159,38 @@ export async function panelSetBlocked(
     targetId: userId,
   });
   return panelGetUser(userId);
+}
+
+export async function panelSetApproved(
+  actorId: string,
+  userId: string,
+  approved: boolean,
+) {
+  const row = await findUserById(userId);
+  if (!row) {
+    const err = Object.assign(new Error('Usuário não encontrado'), { status: 404 });
+    throw err;
+  }
+  await setUserApproved(userId, approved);
+  await logActivity({
+    actorId,
+    action: approved ? 'user_approve' : 'user_revoke',
+    targetType: 'user',
+    targetId: userId,
+  });
+  return panelGetUser(userId);
+}
+
+export async function panelWipeUserContent(actorId: string, userId: string) {
+  const result = await wipeUserPostedContent(userId);
+  await logActivity({
+    actorId,
+    action: 'user_content_wipe',
+    targetType: 'user',
+    targetId: userId,
+    meta: result,
+  });
+  return result;
 }
 
 export async function panelResetPassword(
@@ -224,4 +274,25 @@ export async function panelListActivity(params: {
     page: params.page,
     pageSize: limit,
   };
+}
+
+export async function panelGetSettings() {
+  return getPanelSettings();
+}
+
+export async function panelUpdateSettings(
+  actorId: string,
+  params: { autoApproveUsers: boolean },
+) {
+  const settings = await updatePanelSettings({
+    autoApproveUsers: Boolean(params.autoApproveUsers),
+  });
+  await logActivity({
+    actorId,
+    action: 'settings_update',
+    targetType: 'panel',
+    targetId: 'settings',
+    meta: { autoApproveUsers: settings.autoApproveUsers },
+  });
+  return settings;
 }

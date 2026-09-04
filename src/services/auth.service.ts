@@ -2,15 +2,17 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getFileUrl } from '../storage';
 import type { PublicUser, AuthResult } from '../types';
+import { logActivity } from '../lib/activity';
+import { getPanelSettings } from '../repositories/panelSettings.repository';
 import {
   findUserById,
   findUserByUsername,
   usernameExists,
   createUser,
   userIsBlocked,
+  userIsApproved,
   type UserRow,
 } from '../repositories/users.repository';
-import { logActivity } from '../lib/activity';
 
 export type { PublicUser, AuthResult };
 
@@ -24,6 +26,8 @@ export async function formatUser(row: UserRow | null): Promise<PublicUser | null
     username: row.username,
     created_at: row.created_at,
     avatar_url: row.avatar_key ? await getFileUrl(row.avatar_key) : null,
+    is_approved: userIsApproved(row),
+    is_blocked: userIsBlocked(row),
   };
 }
 
@@ -82,7 +86,8 @@ export async function register(
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  const row = await createUser(fullName, username, passwordHash);
+  const { autoApproveUsers } = await getPanelSettings();
+  const row = await createUser(fullName, username, passwordHash, autoApproveUsers);
   const user = (await formatUser(row))!;
   const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, {
     expiresIn: '30d',
@@ -92,6 +97,7 @@ export async function register(
     action: 'register',
     targetType: 'user',
     targetId: user.id,
+    meta: { autoApproved: autoApproveUsers },
   });
   return { user, token };
 }
@@ -104,7 +110,15 @@ export async function login(username: string, password: string): Promise<AuthRes
   if (!valid) throw new Error('Usuário ou senha incorretos');
 
   if (userIsBlocked(row)) {
-    const err = Object.assign(new Error('Conta bloqueada'), { status: 403 });
+    const err = Object.assign(new Error('Conta bloqueada'), { status: 403, code: 'BLOCKED' });
+    throw err;
+  }
+
+  if (!userIsApproved(row)) {
+    const err = Object.assign(new Error('Conta aguardando liberação'), {
+      status: 403,
+      code: 'PENDING_APPROVAL',
+    });
     throw err;
   }
 

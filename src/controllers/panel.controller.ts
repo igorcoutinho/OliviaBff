@@ -6,8 +6,12 @@ import {
   panelListUsers,
   panelGetUser,
   panelSetBlocked,
+  panelSetApproved,
+  panelWipeUserContent,
   panelResetPassword,
   panelListActivity,
+  panelGetSettings,
+  panelUpdateSettings,
 } from '../services/panel.service';
 
 function handleError(res: Response, err: any): void {
@@ -51,7 +55,10 @@ export async function getUsers(req: Request, res: Response): Promise<void> {
     const page = Number(req.query.page || 1);
     const pageSize = Number(req.query.pageSize || 20);
     const search = req.query.search ? String(req.query.search) : undefined;
-    const data = await panelListUsers(search, page, pageSize);
+    let approved: boolean | undefined;
+    if (req.query.approved === '0' || req.query.approved === 'false') approved = false;
+    if (req.query.approved === '1' || req.query.approved === 'true') approved = true;
+    const data = await panelListUsers(search, page, pageSize, approved);
     res.json(data);
   } catch (err: any) {
     handleError(res, err);
@@ -72,6 +79,25 @@ export async function patchUserBlock(req: Request, res: Response): Promise<void>
     const blocked = Boolean(req.body?.blocked);
     const user = await panelSetBlocked(req.user.userId, String(req.params.id), blocked);
     res.json({ user });
+  } catch (err: any) {
+    handleError(res, err);
+  }
+}
+
+export async function patchUserApprove(req: Request, res: Response): Promise<void> {
+  try {
+    const approved = req.body?.approved !== false;
+    const user = await panelSetApproved(req.user.userId, String(req.params.id), Boolean(approved));
+    res.json({ user });
+  } catch (err: any) {
+    handleError(res, err);
+  }
+}
+
+export async function postUserWipeContent(req: Request, res: Response): Promise<void> {
+  try {
+    const result = await panelWipeUserContent(req.user.userId, String(req.params.id));
+    res.json({ ok: true, ...result });
   } catch (err: any) {
     handleError(res, err);
   }
@@ -98,6 +124,30 @@ export async function getActivity(req: Request, res: Response): Promise<void> {
     const actorId = req.query.userId ? String(req.query.userId) : undefined;
     const data = await panelListActivity({ actorId, page, pageSize });
     res.json(data);
+  } catch (err: any) {
+    handleError(res, err);
+  }
+}
+
+export async function getSettings(_req: Request, res: Response): Promise<void> {
+  try {
+    const settings = await panelGetSettings();
+    res.json({ settings });
+  } catch (err: any) {
+    handleError(res, err);
+  }
+}
+
+export async function patchSettings(req: Request, res: Response): Promise<void> {
+  try {
+    if (typeof req.body?.autoApproveUsers !== 'boolean') {
+      res.status(400).json({ error: 'autoApproveUsers (boolean) é obrigatório' });
+      return;
+    }
+    const settings = await panelUpdateSettings(req.user.userId, {
+      autoApproveUsers: req.body.autoApproveUsers,
+    });
+    res.json({ settings });
   } catch (err: any) {
     handleError(res, err);
   }

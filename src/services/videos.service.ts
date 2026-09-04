@@ -3,6 +3,7 @@ import { uploadFile, getFileUrl } from '../storage';
 import { optimizeVideo } from '../lib/optimizeVideo';
 import type { UploadedFile, VideoItem } from '../types';
 import { insertVideo, findVideosByUser } from '../repositories/videos.repository';
+import { logActivity } from '../lib/activity';
 
 export type { VideoItem };
 
@@ -19,7 +20,15 @@ export async function createVideo(params: {
   const optimized = await optimizeVideo(file.buffer);
   const key = `videos/${userId}/${uuidv4()}.mp4`;
   await uploadFile(key, optimized.buffer, optimized.contentType);
-  return insertVideo(userId, message || '', key, optimized.size);
+  const row = await insertVideo(userId, message || '', key, optimized.size);
+  await logActivity({
+    actorId: userId,
+    action: 'video_post',
+    targetType: 'video',
+    targetId: row.id,
+    meta: { message: (message || '').slice(0, 120) },
+  });
+  return row;
 }
 
 export async function getUserVideos(userId: string): Promise<VideoItem[]> {

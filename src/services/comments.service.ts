@@ -22,6 +22,7 @@ import {
   decodeCommentCursor,
   encodeCommentCursor,
 } from '../lib/cursor';
+import { logActivity } from '../lib/activity';
 
 export interface CommentItem {
   id: string;
@@ -114,6 +115,14 @@ export async function createComment(params: {
     body,
   });
 
+  await logActivity({
+    actorId: params.userId,
+    action: 'comment_create',
+    targetType: 'photo',
+    targetId: params.photoId,
+    meta: { commentId: id, body: body.slice(0, 160) },
+  });
+
   const ownerId = await getPhotoOwnerId(params.photoId);
   if (ownerId && ownerId !== params.userId) {
     try {
@@ -196,6 +205,13 @@ export async function removeComment(params: {
   }
 
   await deleteCommentByIdAndUser(params.commentId, params.userId);
+  await logActivity({
+    actorId: params.userId,
+    action: 'comment_delete',
+    targetType: 'comment',
+    targetId: params.commentId,
+    meta: { photoId: comment.photo_id },
+  });
   try {
     await deleteNotificationsByTarget(params.commentId);
   } catch (err: any) {

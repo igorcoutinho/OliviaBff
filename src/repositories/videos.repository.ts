@@ -34,3 +34,10 @@ export async function findVideosByUser(userId: string): Promise<VideoRow[]> {
   );
   return rows;
 }
+
+export async function deleteVideosByUserId(userId: string): Promise<number> {
+  const videos = await findVideosByUser(userId);
+  if (videos.length === 0) return 0;
+  await query('DELETE FROM videos WHERE user_id = $1', [userId]);
+  return videos.length;
+}

@@ -87,6 +87,37 @@ export async function deleteCommentByIdAndUser(id: string, userId: string): Prom
   return comment.photo_id;
 }
 
+export async function deleteCommentVotesByUserId(userId: string): Promise<void> {
+  await query('DELETE FROM comment_votes WHERE user_id = $1', [userId]);
+}
+
+export async function deleteCommentsByUserId(userId: string): Promise<number> {
+  const { rows } = await query<{ id: string; photo_id: string }>(
+    'SELECT id, photo_id FROM comments WHERE user_id = $1',
+    [userId],
+  );
+  if (rows.length === 0) return 0;
+
+  const commentIds = rows.map((r) => r.id);
+  const placeholders = commentIds.map((_, i) => `$${i + 1}`).join(',');
+  await query(
+    `DELETE FROM comment_votes WHERE comment_id IN (${placeholders})`,
+    commentIds,
+  );
+  await query('DELETE FROM comments WHERE user_id = $1', [userId]);
+
+  const photoIds = [...new Set(rows.map((r) => r.photo_id))];
+  for (const photoId of photoIds) {
+    await query(
+      `UPDATE photos SET comments_count = (
+         SELECT COUNT(*) FROM comments WHERE photo_id = $1
+       ) WHERE id = $1`,
+      [photoId],
+    );
+  }
+  return rows.length;
+}
+
 export async function getPhotoCommentsCount(photoId: string): Promise<number> {
   const { rows } = await query<{ comments_count: number | string }>(
     'SELECT comments_count FROM photos WHERE id = $1',

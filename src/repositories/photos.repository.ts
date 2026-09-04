@@ -107,6 +107,35 @@ export async function deletePhotoByIdAndUser(photoId: string, userId: string): P
   await query('DELETE FROM photos WHERE id = $1 AND user_id = $2', [photoId, userId]);
 }
 
+export async function findPhotosByUserId(
+  userId: string,
+): Promise<{ id: string; storage_key: string }[]> {
+  const { rows } = await query<{ id: string; storage_key: string }>(
+    'SELECT id, storage_key FROM photos WHERE user_id = $1',
+    [userId],
+  );
+  return rows;
+}
+
+export async function deleteReactionsByUserId(userId: string): Promise<number> {
+  const { rows } = await query<{ photo_id: string }>(
+    'SELECT photo_id FROM reactions WHERE user_id = $1',
+    [userId],
+  );
+  if (rows.length === 0) return 0;
+  await query('DELETE FROM reactions WHERE user_id = $1', [userId]);
+  const photoIds = [...new Set(rows.map((r) => r.photo_id))];
+  for (const photoId of photoIds) {
+    await query(
+      `UPDATE photos SET likes_count = (
+         SELECT COUNT(*) FROM reactions WHERE photo_id = $1
+       ) WHERE id = $1`,
+      [photoId],
+    );
+  }
+  return rows.length;
+}
+
 export async function getPhotoPreviewRow(photoId: string): Promise<PhotoPreviewRow | null> {
   const { rows } = await query<PhotoPreviewRow>(
     `SELECT p.id, p.caption, u.full_name,

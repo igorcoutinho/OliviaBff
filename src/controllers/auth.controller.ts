@@ -18,12 +18,12 @@ export async function registerHandler(req: Request, res: Response): Promise<void
     }
     const result = await register(fullName, password, preferredUsername);
     res.status(201).json({
-      message: 'Cadastro realizado! Guarde seu nome de usuário.',
+      message: 'Cadastro realizado! Aguarde a liberação para usar o app.',
       user: result.user,
       token: result.token,
     });
   } catch (err: any) {
-    res.status(err.status || 400).json({ error: err.message });
+    res.status(err.status || 400).json({ error: err.message, code: err.code });
   }
 }
 
@@ -37,7 +37,7 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
     const result = await login(username, password);
     res.json({ user: result.user, token: result.token });
   } catch (err: any) {
-    res.status(err.status || 401).json({ error: err.message });
+    res.status(err.status || 401).json({ error: err.message, code: err.code });
   }
 }
 
