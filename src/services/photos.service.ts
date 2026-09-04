@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { newId } from '../db';
 import { uploadFile, getFileUrl, deleteFile } from '../storage';
 import { optimizeImage } from '../lib/optimizeImage';
+import { optimizeVideo } from '../lib/optimizeVideo';
 import type { UploadedFile, MediaItem, FeedItem, FeedPage, ReactionEntry } from '../types';
 import {
   insertPhoto,
@@ -69,10 +70,10 @@ export async function createPost(params: {
   }
 
   if (videoFile) {
-    const ext = videoFile.originalname?.split('.').pop() || 'mp4';
-    const key = `photos/video-${uuidv4()}.${ext}`;
-    await uploadFile(key, videoFile.buffer, videoFile.mimetype);
-    uploadedMedia.push({ type: 'video', key, size: videoFile.size, order: photoFiles.length });
+    const optimized = await optimizeVideo(videoFile.buffer);
+    const key = `photos/video-${uuidv4()}.mp4`;
+    await uploadFile(key, optimized.buffer, optimized.contentType);
+    uploadedMedia.push({ type: 'video', key, size: optimized.size, order: photoFiles.length });
   }
 
   const id = newId();

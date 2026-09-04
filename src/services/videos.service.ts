@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { uploadFile, getFileUrl } from '../storage';
+import { optimizeVideo } from '../lib/optimizeVideo';
 import type { UploadedFile, VideoItem } from '../types';
 import { insertVideo, findVideosByUser } from '../repositories/videos.repository';
 
@@ -15,10 +16,10 @@ export async function createVideo(params: {
   if (!file.mimetype.startsWith('video/'))
     throw Object.assign(new Error('Apenas vídeos são permitidos'), { status: 400 });
 
-  const ext = file.originalname?.split('.').pop() || 'mp4';
-  const key = `videos/${userId}/${uuidv4()}.${ext}`;
-  await uploadFile(key, file.buffer, file.mimetype);
-  return insertVideo(userId, message || '', key, file.size);
+  const optimized = await optimizeVideo(file.buffer);
+  const key = `videos/${userId}/${uuidv4()}.mp4`;
+  await uploadFile(key, optimized.buffer, optimized.contentType);
+  return insertVideo(userId, message || '', key, optimized.size);
 }
 
 export async function getUserVideos(userId: string): Promise<VideoItem[]> {

@@ -5,3 +5,4 @@ uploads/
 .env.production
 data/db.json
 .DS_Store
+.env.production.local

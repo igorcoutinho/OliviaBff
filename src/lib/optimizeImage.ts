@@ -4,7 +4,7 @@ export type ImageKind = 'photo' | 'avatar';
 
 const PRESETS: Record<ImageKind, { maxWidth: number; quality: number }> = {
   photo: { maxWidth: 1280, quality: 72 },
-  avatar: { maxWidth: 400, quality: 70 },
+  avatar: { maxWidth: 256, quality: 68 },
 };
 
 export interface OptimizedImage {
