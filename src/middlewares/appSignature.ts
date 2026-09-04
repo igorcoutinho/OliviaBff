@@ -5,7 +5,10 @@ const APP_SECRET = process.env.APP_SECRET;
 const SIGNATURE_MAX_AGE_MS = 10 * 60 * 1000;
 
 export function requireAppSignature(req: Request, res: Response, next: NextFunction): void {
-  if (req.path === '/api/health') { next(); return; }
+  if (req.path === '/api/health' || req.path.startsWith('/api/panel')) {
+    next();
+    return;
+  }
 
   if (!APP_SECRET) {
     res.status(503).json({ error: 'API não configurada' });

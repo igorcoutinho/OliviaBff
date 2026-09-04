@@ -7,8 +7,10 @@ import {
   findUserByUsername,
   usernameExists,
   createUser,
+  userIsBlocked,
   type UserRow,
 } from '../repositories/users.repository';
+import { logActivity } from '../lib/activity';
 
 export type { PublicUser, AuthResult };
 
@@ -85,6 +87,12 @@ export async function register(
   const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, {
     expiresIn: '30d',
   });
+  await logActivity({
+    actorId: user.id,
+    action: 'register',
+    targetType: 'user',
+    targetId: user.id,
+  });
   return { user, token };
 }
 
@@ -95,9 +103,20 @@ export async function login(username: string, password: string): Promise<AuthRes
   const valid = await bcrypt.compare(password, row.password_hash!);
   if (!valid) throw new Error('Usuário ou senha incorretos');
 
+  if (userIsBlocked(row)) {
+    const err = Object.assign(new Error('Conta bloqueada'), { status: 403 });
+    throw err;
+  }
+
   const user = (await formatUser(row))!;
   const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, {
     expiresIn: '30d',
+  });
+  await logActivity({
+    actorId: user.id,
+    action: 'login',
+    targetType: 'user',
+    targetId: user.id,
   });
   return { user, token };
 }

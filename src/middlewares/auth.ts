@@ -6,6 +6,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 export interface JwtPayload {
   userId: string;
   username: string;
+  panelAdmin?: boolean;
 }
 
 declare global {

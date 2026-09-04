@@ -298,6 +298,31 @@ export async function ensureSchemaPatches(): Promise<void> {
         'Se precisar de ajuda para atualizar, entre em contato com o Igor.'
       )
     `);
+
+    await ensureMysqlColumn(
+      'users',
+      'panel_access',
+      'TINYINT(1) NOT NULL DEFAULT 0',
+    );
+    await ensureMysqlColumn(
+      'users',
+      'is_blocked',
+      'TINYINT(1) NOT NULL DEFAULT 0',
+    );
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS activity_logs (
+        id VARCHAR(36) PRIMARY KEY,
+        actor_id VARCHAR(36) NULL,
+        action VARCHAR(64) NOT NULL,
+        target_type VARCHAR(64) NULL,
+        target_id VARCHAR(36) NULL,
+        meta_json TEXT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_activity_logs_created (created_at),
+        INDEX idx_activity_logs_actor (actor_id, created_at),
+        INDEX idx_activity_logs_action (action, created_at)
+      )
+    `);
     return;
   }
 
@@ -437,6 +462,29 @@ export async function ensureSchemaPatches(): Promise<void> {
     )
     ON CONFLICT (id) DO NOTHING
   `);
+  await pool.query(
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS panel_access BOOLEAN NOT NULL DEFAULT FALSE',
+  );
+  await pool.query(
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE',
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS activity_logs (
+      id TEXT PRIMARY KEY,
+      actor_id TEXT,
+      action TEXT NOT NULL,
+      target_type TEXT,
+      target_id TEXT,
+      meta_json TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_activity_logs_created ON activity_logs(created_at DESC)',
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_activity_logs_actor ON activity_logs(actor_id, created_at DESC)',
+  );
 }
 
 export function newId(): string {

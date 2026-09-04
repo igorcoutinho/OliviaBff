@@ -16,6 +16,7 @@ import photosRoutes from './routes/photos.routes';
 import notificationsRoutes from './routes/notifications.routes';
 import adminRoutes from './routes/admin.routes';
 import appRoutes from './routes/app.routes';
+import panelRoutes from './routes/panel.routes';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -35,6 +36,7 @@ app.use('/api/photos', photosRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/app', appRoutes);
+app.use('/api/panel', panelRoutes);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {

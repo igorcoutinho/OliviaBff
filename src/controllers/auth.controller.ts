@@ -37,7 +37,7 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
     const result = await login(username, password);
     res.json({ user: result.user, token: result.token });
   } catch (err: any) {
-    res.status(401).json({ error: err.message });
+    res.status(err.status || 401).json({ error: err.message });
   }
 }
 
