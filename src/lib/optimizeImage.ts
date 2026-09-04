@@ -20,10 +20,16 @@ export async function optimizeImage(
   input: Buffer,
   kind: ImageKind = 'photo',
 ): Promise<OptimizedImage> {
-  const { maxWidth, quality } = PRESETS[kind];
+  if (!input || input.length === 0) {
+    throw Object.assign(new Error('Imagem vazia ou corrompida'), { status: 400 });
+  }
 
-  const meta = await sharp(input).metadata();
-  let pipeline = sharp(input).rotate();
+  const { maxWidth, quality } = PRESETS[kind];
+  // Cópia própria evita "source: bad seek" quando o buffer do multer é reutilizado
+  const source = Buffer.from(input);
+
+  const meta = await sharp(source, { failOn: 'none' }).metadata();
+  let pipeline = sharp(source, { failOn: 'none' }).rotate();
 
   if (kind === 'thumb') {
     pipeline = pipeline.resize({ width: maxWidth, height: maxWidth, fit: 'cover' });
@@ -32,7 +38,7 @@ export async function optimizeImage(
   }
 
   const buffer = await pipeline.jpeg({ quality, mozjpeg: true }).toBuffer();
-  const out = await sharp(buffer).metadata();
+  const out = await sharp(buffer, { failOn: 'none' }).metadata();
 
   return {
     buffer,

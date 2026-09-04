@@ -12,6 +12,7 @@ import {
   panelListActivity,
   panelGetSettings,
   panelUpdateSettings,
+  panelListErrors,
 } from '../services/panel.service';
 
 function handleError(res: Response, err: any): void {
@@ -148,6 +149,19 @@ export async function patchSettings(req: Request, res: Response): Promise<void> 
       autoApproveUsers: req.body.autoApproveUsers,
     });
     res.json({ settings });
+  } catch (err: any) {
+    handleError(res, err);
+  }
+}
+
+export async function getErrors(req: Request, res: Response): Promise<void> {
+  try {
+    const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.pageSize || 30);
+    const userId = req.query.userId ? String(req.query.userId) : undefined;
+    const action = req.query.action ? String(req.query.action) : undefined;
+    const data = await panelListErrors({ userId, action, page, pageSize });
+    res.json(data);
   } catch (err: any) {
     handleError(res, err);
   }

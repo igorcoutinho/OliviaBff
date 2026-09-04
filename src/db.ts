@@ -340,6 +340,22 @@ export async function ensureSchemaPatches(): Promise<void> {
       INSERT IGNORE INTO panel_settings (id, auto_approve_users)
       VALUES (1, 0)
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS error_logs (
+        id VARCHAR(36) PRIMARY KEY,
+        user_id VARCHAR(36) NULL,
+        user_name VARCHAR(255) NULL,
+        username VARCHAR(255) NULL,
+        action VARCHAR(64) NOT NULL,
+        error_message TEXT NOT NULL,
+        error_stack TEXT NULL,
+        meta_json TEXT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_error_logs_created (created_at),
+        INDEX idx_error_logs_user (user_id, created_at),
+        INDEX idx_error_logs_action (action, created_at)
+      )
+    `);
     return;
   }
 
@@ -517,6 +533,25 @@ export async function ensureSchemaPatches(): Promise<void> {
     VALUES (1, FALSE)
     ON CONFLICT (id) DO NOTHING
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS error_logs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      user_name TEXT,
+      username TEXT,
+      action TEXT NOT NULL,
+      error_message TEXT NOT NULL,
+      error_stack TEXT,
+      meta_json TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_error_logs_created ON error_logs(created_at DESC)',
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_error_logs_user ON error_logs(user_id, created_at DESC)',
+  );
 }
 
 export function newId(): string {

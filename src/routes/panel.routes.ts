@@ -13,6 +13,7 @@ import {
   getActivity,
   getSettings,
   patchSettings,
+  getErrors,
 } from '../controllers/panel.controller';
 
 const router = Router();
@@ -30,5 +31,6 @@ router.patch('/users/:id/approve', panelAuthMiddleware, patchUserApprove);
 router.post('/users/:id/wipe-content', panelAuthMiddleware, postUserWipeContent);
 router.post('/users/:id/reset-password', panelAuthMiddleware, postUserResetPassword);
 router.get('/activity', panelAuthMiddleware, getActivity);
+router.get('/errors', panelAuthMiddleware, getErrors);
 
 export default router;

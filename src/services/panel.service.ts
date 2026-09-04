@@ -22,6 +22,7 @@ import {
   getPanelSettings,
   updatePanelSettings,
 } from '../repositories/panelSettings.repository';
+import { listErrorLogs } from '../repositories/errorLog.repository';
 import {
   JWT_SECRET,
   PANEL_ADMIN_PASSWORD,
@@ -297,4 +298,54 @@ export async function panelUpdateSettings(
     meta: { autoApproveUsers: settings.autoApproveUsers },
   });
   return settings;
+}
+
+export async function panelListErrors(params: {
+  userId?: string;
+  action?: string;
+  page: number;
+  pageSize: number;
+}) {
+  const limit = Math.min(Math.max(params.pageSize, 1), 100);
+  const offset = Math.max(params.page - 1, 0) * limit;
+  const { rows, total } = await listErrorLogs({
+    userId: params.userId,
+    action: params.action,
+    limit,
+    offset,
+  });
+
+  const items = rows.map((row) => {
+    let meta: unknown = null;
+    if (row.meta_json) {
+      try {
+        meta = JSON.parse(row.meta_json);
+      } catch {
+        meta = row.meta_json;
+      }
+    }
+    return {
+      id: row.id,
+      action: row.action,
+      errorMessage: row.error_message,
+      errorStack: row.error_stack,
+      meta,
+      createdAt: row.created_at,
+      user: row.user_id
+        ? {
+            id: row.user_id,
+            full_name: row.user_name,
+            username: row.username,
+          }
+        : row.username
+          ? {
+              id: null,
+              full_name: row.user_name,
+              username: row.username,
+            }
+          : null,
+    };
+  });
+
+  return { items, total, page: params.page, pageSize: limit };
 }
